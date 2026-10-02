@@ -1,608 +1,97 @@
 import 'package:flutter/material.dart';
-import 'invoice_page.dart';
-import 'tenant_list_page.dart';
+import 'room_detail_page.dart';
+
+const blue = Color(0xFF245DE5);
+const ink = Color(0xFF202A3A);
+const muted = Color(0xFF61738E);
+const canvas = Color(0xFFF7F9FC);
 
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
-
   @override
   State<RoomPage> createState() => _RoomPageState();
 }
 
 class _RoomPageState extends State<RoomPage> {
-  int selectedFilter = 0;
-
-  String searchText = "";
-
-  // ============================================================
-  // DỮ LIỆU PHÒNG TẠM THỜI
-  // ============================================================
-  final List<Map<String, String>> rooms = [
-    {
-      "room": "P.101",
-      "tenant": "Nguyễn Văn An",
-      "price": "2.500.000đ/tháng",
-      "status": "Đang thuê",
-    },
-    {
-      "room": "P.102",
-      "tenant": "Trần Minh Huy",
-      "price": "2.500.000đ/tháng",
-      "status": "Đang thuê",
-    },
-    {
-      "room": "P.103",
-      "tenant": "—",
-      "price": "2.300.000đ/tháng",
-      "status": "Trống",
-    },
-    {
-      "room": "P.201",
-      "tenant": "Lê Thị Mai",
-      "price": "2.800.000đ/tháng",
-      "status": "Bảo trì",
-    },
+  int filter = 0;
+  String query = '';
+  final rooms = <Map<String, String>>[
+    {'name':'P.101','status':'Đang có người','price':'3.500.000đ/tháng','area':'25m²','people':'2 người'},
+    {'name':'P.102','status':'Trống','price':'2.800.000đ/tháng','area':'20m²','people':'0 người'},
+    {'name':'P.103','status':'Đang có người','price':'3.200.000đ/tháng','area':'22m²','people':'3 người'},
+    {'name':'P.201','status':'Đang sửa','price':'2.500.000đ/tháng','area':'18m²','people':'0 người'},
   ];
 
-  // ============================================================
-// NÚT: THÊM PHÒNG
-// ============================================================
-  void btnAddRoom() {
-    // Sau này liên kết sang màn hình thêm phòng
-  }
-
-// ============================================================
-// NÚT: XEM CHI TIẾT PHÒNG
-// ============================================================
-  void btnRoomDetail(String roomName) {
-    // Sau này liên kết sang màn hình chi tiết phòng
-  }
-
-  // ============================================================
-// NÚT: DANH SÁCH NGƯỜI THUÊ
-// ============================================================
-  void btnTenantList() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const TenantListPage(),
-      ),
-    );
-  }
-
-// ============================================================
-// MENU: TỔNG QUAN
-// ============================================================
-  void btnOverview() {
-    Navigator.pop(context);
-  }
-
-// ============================================================
-// MENU: PHÒNG
-// ============================================================
-  void btnRooms() {
-    // Đang ở trang Phòng nên không cần làm gì
-  }
-
-// ============================================================
-// MENU: HÓA ĐƠN
-// ============================================================
-  void btnInvoices() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const InvoicePage(),
-      ),
-    );
-  }
-
-// ============================================================
-// MENU: BẢO TRÌ
-// ============================================================
-  void btnMaintenance() {
-    // Sau này liên kết sang màn hình bảo trì
-  }
-
-// ============================================================
-// MENU: TÀI KHOẢN
-// ============================================================
-  void btnAccount() {
-    // Sau này liên kết sang màn hình tài khoản
-  }
-
-  // ============================================================
-  // LỌC PHÒNG
-  // ============================================================
-  List<Map<String, String>> get filteredRooms {
-    List<Map<String, String>> result = rooms;
-
-    // Lọc trạng thái
-    if (selectedFilter == 1) {
-      result = result
-          .where((room) => room["status"] == "Đang thuê")
-          .toList();
-    } else if (selectedFilter == 2) {
-      result = result
-          .where((room) => room["status"] == "Trống")
-          .toList();
-    }
-
-    // Tìm kiếm
-    if (searchText.isNotEmpty) {
-      result = result.where((room) {
-        final roomName = room["room"]!.toLowerCase();
-        final tenantName = room["tenant"]!.toLowerCase();
-        final keyword = searchText.toLowerCase();
-
-        return roomName.contains(keyword) ||
-            tenantName.contains(keyword);
-      }).toList();
-    }
-
-    return result;
-  }
+  void notice(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  void openRoom(Map<String, String> room, {int tab = 0}) => Navigator.push(context, MaterialPageRoute(builder: (_) => RoomDetailPage(room: room, initialTab: tab)));
 
   @override
   Widget build(BuildContext context) {
+    final shown = rooms.where((r) => (filter == 0 || r['status'] == (filter == 1 ? 'Đang có người' : 'Trống')) && r['name']!.toLowerCase().contains(query.toLowerCase())).toList();
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FC),
+      backgroundColor: canvas,
+      body: SafeArea(child: Column(children: [
+        Expanded(child: ListView(padding: const EdgeInsets.fromLTRB(16, 18, 16, 20), children: [
+          Row(children: [const Expanded(child: Text('Danh sách phòng', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: ink))),
+            FilledButton(onPressed: () => notice('Chức năng thêm phòng chưa kết nối dữ liệu'), style: FilledButton.styleFrom(backgroundColor: blue, minimumSize: const Size(70, 32), padding: const EdgeInsets.symmetric(horizontal: 12)), child: const Text('+ Thêm'))]),
+          const SizedBox(height: 14),
+          TextField(onChanged: (v) => setState(() => query = v), decoration: InputDecoration(hintText: '⌕  Tìm kiếm phòng...', hintStyle: const TextStyle(color: muted, fontSize: 14), filled: true, fillColor: Colors.white, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13))),
+          const SizedBox(height: 12),
+          Row(children: List.generate(3, (i) => Padding(padding: const EdgeInsets.only(right: 7), child: ChoiceChip(label: Text(['Tất cả','Đang có người','Trống'][i], style: TextStyle(fontSize: 12, color: filter == i ? Colors.white : muted)), selected: filter == i, selectedColor: blue, backgroundColor: Colors.white, showCheckmark: false, side: BorderSide.none, onSelected: (_) => setState(() => filter = i))))),
+          const SizedBox(height: 10),
+          if (shown.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('Không tìm thấy phòng'))),
+          ...shown.map((room) => _roomCard(room)),
+        ])),
+        const AppBottomBar(selected: 0),
+      ])),
+    );
+  }
 
-      // ============================================================
-      // BODY
-      // ============================================================
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ======================================================
-            // PHẦN TRÊN CÓ THỂ CUỘN
-            // ======================================================
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(
-                  18,
-                  18,
-                  18,
-                  25,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // =================================================
-                    // HEADER
-                    // =================================================
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Phòng",
-                                style: TextStyle(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF202533),
-                                ),
-                              ),
-                              SizedBox(height: 4),
-                              Text(
-                                "15 phòng · 12 đang thuê",
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+  Widget _roomCard(Map<String, String> room) {
+    final status = room['status']!;
+    final color = status == 'Đang có người' ? const Color(0xFF07934B) : status == 'Trống' ? blue : const Color(0xFFDD510D);
+    return Container(margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(9), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)), child: Row(children: [
+      InkWell(onTap: () => openRoom(room), child: Container(width: 57, height: 70, decoration: BoxDecoration(color: const Color(0xFFEAF1FA), borderRadius: BorderRadius.circular(9)), child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [const Padding(padding: EdgeInsets.only(left: 6), child: Text('PHÒNG', style: TextStyle(fontSize: 9, color: muted))), Padding(padding: const EdgeInsets.only(left: 6), child: Text(room['name']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: ink)))]))),
+      const SizedBox(width: 10),
+      Expanded(child: InkWell(onTap: () => openRoom(room), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3), decoration: BoxDecoration(color: color.withValues(alpha: .08), borderRadius: BorderRadius.circular(12)), child: Text(status, style: TextStyle(fontSize: 10, color: color))), const SizedBox(height: 5), Text(room['price']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: ink)), Text('${room['area']}  •  ${room['people']}', style: const TextStyle(fontSize: 10, color: muted)), Row(mainAxisAlignment: MainAxisAlignment.end, children: [TextButton(onPressed: () => notice('Chức năng sửa phòng chưa kết nối dữ liệu'), style: TextButton.styleFrom(visualDensity: VisualDensity.compact, backgroundColor: const Color(0xFFEAF0FF)), child: const Text('Sửa', style: TextStyle(fontSize: 11))), const SizedBox(width: 5), TextButton(onPressed: () => notice('Chức năng xóa phòng chưa kết nối dữ liệu'), style: TextButton.styleFrom(visualDensity: VisualDensity.compact, backgroundColor: const Color(0xFFFFEEEE)), child: const Text('Xóa', style: TextStyle(fontSize: 11, color: Colors.red)))] )]))),
+      IconButton(onPressed: () => openRoom(room), icon: const Icon(Icons.chevron_right, size: 19, color: muted)),
+    ]));
+  }
+}
 
-                        // ================= NÚT NGƯỜI THUÊ =================
-                        IconButton(
-                          onPressed: btnTenantList,
-                          tooltip: "Danh sách người thuê",
-                          icon: const Icon(
-                            Icons.people_outline,
-                            color: Color(0xFF2F67EA),
-                          ),
-                        ),
-
-                        const SizedBox(width: 4),
-
-                        // ================= NÚT THÊM =================
-                        ElevatedButton.icon(
-                          onPressed: btnAddRoom,
-                          icon: const Icon(
-                            Icons.add,
-                            size: 16,
-                          ),
-                          label: const Text(
-                            "Thêm",
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFEAF0FF),
-                            foregroundColor: const Color(0xFF2F67EA),
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 11,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(22),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 25),
-
-                    // =================================================
-                    // Ô TÌM KIẾM
-                    // =================================================
-                    TextField(
-                      onChanged: (value) {
-                        setState(() {
-                          searchText = value;
-                        });
-                      },
-                      decoration: InputDecoration(
-                        hintText:
-                        "Tìm theo số phòng hoặc người thuê",
-                        hintStyle: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                        prefixIcon: const Icon(
-                          Icons.search,
-                          size: 18,
-                          color: Colors.grey,
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding:
-                        const EdgeInsets.symmetric(
-                          vertical: 16,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius:
-                          BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Color(0xFFE0E2E8),
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius:
-                          BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Color(0xFF2F67EA),
-                            width: 1.5,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    // =================================================
-                    // BỘ LỌC
-                    // =================================================
-                    Row(
-                      children: [
-                        _filterButton(
-                          index: 0,
-                          text: "Tất cả 15",
-                          selectedColor:
-                          const Color(0xFFEAF0FF),
-                          textColor:
-                          const Color(0xFF2F67EA),
-                        ),
-
-                        const SizedBox(width: 10),
-
-                        _filterButton(
-                          index: 1,
-                          text: "Đang thuê 12",
-                          selectedColor:
-                          const Color(0xFFE7F8ED),
-                          textColor:
-                          const Color(0xFF16A15D),
-                        ),
-
-                        const SizedBox(width: 10),
-
-                        _filterButton(
-                          index: 2,
-                          text: "Trống 2",
-                          selectedColor:
-                          const Color(0xFFF0F2F5),
-                          textColor:
-                          const Color(0xFF707582),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 22),
-
-                    // =================================================
-                    // DANH SÁCH PHÒNG
-                    // =================================================
-                    ...filteredRooms.map(
-                          (room) => Padding(
-                        padding:
-                        const EdgeInsets.only(bottom: 14),
-                        child: _roomCard(
-                          roomNumber: room["room"]!,
-                          tenant: room["tenant"]!,
-                          price: room["price"]!,
-                          status: room["status"]!,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-
-      // ============================================================
-      // THANH MENU DƯỚI
-      // ============================================================
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(
-            top: BorderSide(
-              color: Color(0xFFEEEEEE),
-            ),
-          ),
-        ),
-        child: SafeArea(
-          child: NavigationBar(
-            height: 70,
-            elevation: 0,
-            backgroundColor: Colors.white,
-            indicatorColor: const Color(0xFFEAF0FF),
-
-            // Trang Phòng = index 1
-            selectedIndex: 1,
-
-            onDestinationSelected: (index) {
-              if (index == 0) {
-                btnOverview();
-              } else if (index == 1) {
-                btnRooms();
-              } else if (index == 2) {
-                btnInvoices();
-              } else if (index == 3) {
-                btnMaintenance();
-              } else if (index == 4) {
-                btnAccount();
+class AppBottomBar extends StatelessWidget {
+  final int selected;
+  const AppBottomBar({super.key, required this.selected});
+  @override
+  Widget build(BuildContext context) {
+    const labels = ['Phòng','Người thuê','Dịch vụ','Hóa đơn','Tài khoản'];
+    const icons = [Icons.home_outlined, Icons.people_outline, Icons.circle_outlined, Icons.receipt_long_outlined, Icons.settings_outlined];
+    return Container(
+      decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE7EAF0)))),
+      padding: const EdgeInsets.fromLTRB(3, 4, 3, 6),
+      child: Row(
+        children: List.generate(5, (i) => Expanded(
+          child: InkWell(
+            onTap: () {
+              if (i == 0) {
+                Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const RoomPage()), (route) => false);
+              } else if (i < 4) {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => RoomDetailPage(room: const {'name':'P.101','status':'Đang có người','price':'3.500.000đ/tháng','area':'25m²','people':'2 người'}, initialTab: i)));
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trang tài khoản sẽ được hoàn thiện sau')));
               }
             },
-
-            destinations: const [
-              // MENU: TỔNG QUAN
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                label: "Tổng quan",
-              ),
-
-              // MENU: PHÒNG
-              NavigationDestination(
-                icon: Icon(Icons.grid_view_outlined),
-                selectedIcon: Icon(
-                  Icons.grid_view,
-                  color: Color(0xFF2F67EA),
-                ),
-                label: "Phòng",
-              ),
-
-              // MENU: HÓA ĐƠN
-              NavigationDestination(
-                icon: Icon(
-                  Icons.receipt_long_outlined,
-                ),
-                label: "Hóa đơn",
-              ),
-
-              // MENU: BẢO TRÌ
-              NavigationDestination(
-                icon: Icon(
-                  Icons.home_repair_service_outlined,
-                ),
-                label: "Bảo trì",
-              ),
-
-              // MENU: TÀI KHOẢN
-              NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                label: "Tài khoản",
-              ),
-            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              decoration: BoxDecoration(color: selected == i ? const Color(0xFFEAF0FF) : null, borderRadius: BorderRadius.circular(13)),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icons[i], size: 18, color: selected == i ? blue : muted),
+                const SizedBox(height: 3),
+                Text(labels[i], maxLines: 1, style: TextStyle(fontSize: 10, color: selected == i ? blue : muted)),
+              ]),
+            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // WIDGET: NÚT LỌC
-  // ============================================================
-  Widget _filterButton({
-    required int index,
-    required String text,
-    required Color selectedColor,
-    required Color textColor,
-  }) {
-    final bool isSelected = selectedFilter == index;
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          selectedFilter = index;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 7,
-        ),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? selectedColor
-              : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 11,
-            color: isSelected
-                ? textColor
-                : Colors.grey,
-            fontWeight: isSelected
-                ? FontWeight.w600
-                : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // WIDGET: THẺ PHÒNG
-  // ============================================================
-  Widget _roomCard({
-    required String roomNumber,
-    required String tenant,
-    required String price,
-    required String status,
-  }) {
-    Color statusBackground;
-    Color statusText;
-
-    if (status == "Đang thuê") {
-      statusBackground = const Color(0xFFE7F8ED);
-      statusText = const Color(0xFF16A15D);
-    } else if (status == "Trống") {
-      statusBackground = const Color(0xFFEAF0FF);
-      statusText = const Color(0xFF2F67EA);
-    } else {
-      statusBackground = const Color(0xFFFFF0DE);
-      statusText = const Color(0xFFE88623);
-    }
-
-    return InkWell(
-      onTap: () {
-        btnRoomDetail(roomNumber);
-      },
-      borderRadius: BorderRadius.circular(18),
-
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(15),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Row(
-          children: [
-            // ================= ICON PHÒNG =================
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: const Color(0xFFEAF0FF),
-                borderRadius: BorderRadius.circular(13),
-              ),
-              child: const Icon(
-                Icons.grid_on_rounded,
-                color: Color(0xFF2F67EA),
-                size: 20,
-              ),
-            ),
-
-            const SizedBox(width: 14),
-
-            // ================= THÔNG TIN =================
-            Expanded(
-              child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    roomNumber,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF202533),
-                    ),
-                  ),
-
-                  const SizedBox(height: 6),
-
-                  Text(
-                    tenant,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey,
-                    ),
-                  ),
-
-                  const SizedBox(height: 7),
-
-                  Text(
-                    price,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF202533),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // ================= PHẦN BÊN PHẢI =================
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusBackground,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Text(
-                    status,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: statusText,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                const Icon(
-                  Icons.chevron_right,
-                  size: 20,
-                  color: Colors.grey,
-                ),
-              ],
-            ),
-          ],
-        ),
+        )),
       ),
     );
   }

@@ -1,5 +1,5 @@
   import 'package:flutter/material.dart';
-  import 'landlord_home_page.dart';
+  import 'room_page.dart';
 
   class LoginPage extends StatefulWidget {
     const LoginPage({super.key});
@@ -18,13 +18,13 @@
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => const LandlordHomePage(),
+            builder: (context) => const RoomPage(),
           ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Trang Người thuê sẽ làm sau"),
+            content: Text(""),
           ),
         );
       }
@@ -34,7 +34,7 @@
     void btnRegister() {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Trang đăng ký sẽ làm sau"),
+          content: Text(""),
         ),
       );
     }
@@ -159,7 +159,7 @@
 
                             // ================= EMAIL =================
                             const Text(
-                              "Email",
+                              "SĐT/Email",
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -171,7 +171,7 @@
                             TextField(
                               keyboardType: TextInputType.emailAddress,
                               decoration: InputDecoration(
-                                hintText: "example@email.com",
+                                hintText: "@gmail.com",
                                 hintStyle: const TextStyle(
                                   color: Colors.grey,
                                   fontSize: 13,
