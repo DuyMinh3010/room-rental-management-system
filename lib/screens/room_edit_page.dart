@@ -22,7 +22,7 @@ class _RoomEditPageState extends State<RoomEditPage> {
   final zone = TextEditingController();
   final description = TextEditingController();
   final billingDay = TextEditingController(text: '05');
-  String status = 'Trống';
+  String? status = 'Trống';
 
   @override
   void initState() {
@@ -33,11 +33,17 @@ class _RoomEditPageState extends State<RoomEditPage> {
       price.text = (room['price'] ?? '').replaceAll(RegExp(r'[^0-9]'), '');
       area.text = (room['area'] ?? '').replaceAll('m²', '').trim();
       people.text = (room['people'] ?? '').replaceAll(' người', '').trim();
-      status = room['status'] ?? 'Trống';
+      final currentStatus = room['status'];
+      status = ['Trống', 'Đang có người', 'Đang sửa'].contains(currentStatus)
+          ? currentStatus : null;
       deposit.text = (room['deposit'] ?? '0').replaceAll(RegExp(r'[^0-9]'), '');
-      zone.text = room['zone'] ?? 'Khu A · Tầng 1';
+      zone.text = room['zone'] ?? '';
       description.text = room['description'] ?? '';
-      billingDay.text = (room['billingDay'] ?? '05').split(' ').first;
+      billingDay.text = room['billingDay'] == 'Chưa cập nhật'
+          ? '' : (room['billingDay'] ?? '').split(' ').first;
+      for (final controller in [name, area, people, zone, description]) {
+        if (controller.text == 'Chưa cập nhật') controller.clear();
+      }
     } else {
       people.text = '0';
       deposit.text = '0';
@@ -70,7 +76,7 @@ class _RoomEditPageState extends State<RoomEditPage> {
       'zone': zone.text.trim(),
       'description': description.text.trim(),
       'billingDay': '${billingDay.text.trim()} hàng tháng',
-      'status': status,
+      'status': status!,
       'price': '${priceText}đ/tháng',
       'area': '${area.text.trim().replaceAll(',', '.')}m²',
       'people': '${people.text.trim()} người',
@@ -160,6 +166,7 @@ class _RoomEditPageState extends State<RoomEditPage> {
             input('Diện tích', area, number: true, decimal: true, suffix: 'm²'),
             DropdownButtonFormField<String>(
               value: status,
+              validator: (value) => value == null ? 'Vui lòng chọn trạng thái' : null,
               decoration: InputDecoration(
                 labelText: 'Trạng thái',
                 filled: true,

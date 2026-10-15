@@ -1,9 +1,20 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'package:flutter/material.dart';
 
 import 'screens/login_page.dart';
 
-void main() {
-  runApp(const MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    runApp(const MyApp());
+  } catch (e) {
+    runApp(MaterialApp(home: Scaffold(body: Center(child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Text('Chưa khởi tạo được Firebase. Hãy chạy flutterfire configure theo HUONG_DAN.md rồi mở lại ứng dụng.\n$e'),
+    )))));
+  }
 }
 
 class MyApp extends StatelessWidget {

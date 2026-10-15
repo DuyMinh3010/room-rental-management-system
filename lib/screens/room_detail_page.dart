@@ -1,3 +1,5 @@
+import 'dart:convert';
+import '../services/room_service.dart';
 import 'package:flutter/material.dart';
 
 import 'room_page.dart';
@@ -8,18 +10,23 @@ import 'invoice_detail_page.dart';
 import '../data/mock_data.dart';
 
 class RoomDetailPage extends StatefulWidget {
-  final Map<String, String> room;
+  final String roomId;
   final int initialTab;
-  const RoomDetailPage({super.key, required this.room, this.initialTab = 0});
+  const RoomDetailPage({super.key, required this.roomId, this.initialTab = 0});
   @override
   State<RoomDetailPage> createState() => _RoomDetailPageState();
 }
 
 class _RoomDetailPageState extends State<RoomDetailPage> {
   late int tab;
+  final roomService = RoomService();
+  late Stream<Map<String, String>?> roomStream;
+  Map<String, String> room = {};
+  bool saving = false;
   @override
   void initState() {
     super.initState();
+    roomStream = roomService.watchRoom(widget.roomId);
     tab = widget.initialTab.clamp(0, 3).toInt();
   }
 
@@ -46,7 +53,28 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return StreamBuilder<Map<String, String>?>(
+      stream: roomStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError || snapshot.connectionState == ConnectionState.waiting || snapshot.data == null) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Chi tiết phòng')),
+            body: Center(child: snapshot.hasError
+              ? Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(roomError(snapshot.error!)),
+                  TextButton(onPressed: () => setState(() {
+                    roomStream = roomService.watchRoom(widget.roomId);
+                  }), child: const Text('Thử lại')),
+                ])
+              : snapshot.connectionState == ConnectionState.waiting
+                ? const CircularProgressIndicator()
+                : const Text('Phòng đã bị xóa hoặc không tồn tại.')),
+          );
+        }
+        room = snapshot.data!;
+        final services = List<String>.from(jsonDecode(room['services']!));
+        final images = List<String>.from(jsonDecode(room['imageUrls']!));
+        return Scaffold(
       backgroundColor: canvas,
       body: SafeArea(
         child: Column(
@@ -63,7 +91,7 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                       ),
                       Expanded(
                         child: Text(
-                          widget.room['name']!,
+                          room['name']!,
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
@@ -73,7 +101,7 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_horiz, color: ink),
-                        onSelected: (_) => _edit(),
+                        onSelected: (_) { if (!saving) _edit(); },
                         itemBuilder: (_) => [
                           const PopupMenuItem(
                             value: 'edit',
@@ -135,31 +163,36 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                             children: [
                               if (tab == 0) ...[
                                 heading('Thông tin phòng'),
+                                if (saving) const LinearProgressIndicator(),
+                                infoRow('Trạng thái', room['status']!),
+                                infoRow('Khu / tầng', room['zone']!),
+                                infoRow('Số người', room['people']!),
                                 infoRow(
                                   'Diện tích',
-                                  widget.room['area']!.replaceAll('m²', ' m²'),
+                                  room['area']!.replaceAll('m²', ' m²'),
                                 ),
-                                infoRow('Giá thuê', widget.room['price']!),
+                                infoRow('Giá thuê', room['price']!),
                                 infoRow(
                                   'Tiền cọc',
-                                  widget.room['deposit'] ??
-                                      widget.room['price']!.split('/').first,
+                                  room['deposit'] ??
+                                      room['price']!.split('/').first,
                                 ),
                                 infoRow(
                                   'Ngày chốt tiền',
-                                  widget.room['billingDay'] ?? '05 hàng tháng',
+                                  room['billingDay'] ?? 'Chưa cập nhật',
                                 ),
                                 infoRow(
                                   'Mô tả',
-                                  widget.room['description'] ??
-                                      'Phòng thoáng, có cửa sổ',
+                                  room['description'] ??
+                                      'Chưa cập nhật',
                                 ),
                               ],
+                              if (tab != 0) const Text('Tab UI mẫu — chưa kết nối Firebase', style: TextStyle(color: Colors.orange)),
                               if (tab == 1) ...[
                                 heading('Người thuê'),
                                 for (final t in tenantList.where(
                                   (t) => t['room']!.contains(
-                                    widget.room['name']!.replaceAll('P.', ''),
+                                    room['name']!.replaceAll('P.', ''),
                                   ),
                                 ))
                                   tenant(
@@ -170,7 +203,7 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                                   ),
                                 if (!tenantList.any(
                                   (t) => t['room']!.contains(
-                                    widget.room['name']!.replaceAll('P.', ''),
+                                    room['name']!.replaceAll('P.', ''),
                                   ),
                                 ))
                                   const Text('Chưa có người thuê'),
@@ -201,7 +234,7 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                               if (tab == 3) ...[
                                 heading('Hóa đơn'),
                                 for (final b in invoiceList.where(
-                                  (b) => b['room'] == widget.room['name'],
+                                  (b) => b['room'] == room['name'],
                                 ))
                                   invoice(
                                     b['id']!,
@@ -210,7 +243,7 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                                     b['status'] == 'Đã thanh toán',
                                   ),
                                 if (!invoiceList.any(
-                                  (b) => b['room'] == widget.room['name'],
+                                  (b) => b['room'] == room['name'],
                                 ))
                                   const Text('Chưa có hóa đơn'),
                               ],
@@ -231,16 +264,20 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                             spacing: 8,
                             runSpacing: 8,
                             children: [
-                              serviceChip('Điện', blue),
-                              serviceChip('Nước', const Color(0xFF00A2BE)),
-                              serviceChip('WiFi', const Color(0xFF8F35FF)),
-                              serviceChip('Rác', const Color(0xFFFF781E)),
+                              if (services.isEmpty) const Text('Chưa có dịch vụ áp dụng'),
+                              for (final name in services) serviceChip(name, blue),
                             ],
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 74),
+                    if (images.isEmpty) const Text('Chưa có ảnh phòng'),
+                    for (final url in images)
+                      Padding(padding: const EdgeInsets.only(bottom: 8),
+                        child: Image.network(url, height: 200, width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, error, stack) => const Text('Không tải được ảnh phòng'))),
+                    const SizedBox(height: 16),
                     const Center(
                       child: Text(
                         'ẢNH PHÒNG',
@@ -259,6 +296,8 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
           ],
         ),
       ),
+        );
+      },
     );
   }
 
@@ -278,18 +317,27 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
       context,
       MaterialPageRoute(
         builder: (_) => RoomEditPage(
-          room: widget.room,
+          room: room,
           usedNames: roomList
-              .where((r) => r != widget.room)
+              .where((r) => r['id'] != widget.roomId)
               .map((r) => r['name']!)
               .toList(),
         ),
       ),
     );
     if (result == null || !mounted) return;
-    setState(() => widget.room.addAll(result));
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Đã lưu thông tin phòng')));
+    setState(() => saving = true);
+    try {
+      await roomService.save(result, id: widget.roomId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đã lưu thông tin phòng lên Firebase')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(roomError(e))));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
   }
 
   Widget infoRow(String label, String value) {
@@ -344,7 +392,7 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
               const SizedBox(height: 5),
               Text(role, style: const TextStyle(fontSize: 10, color: blue)),
               Text(
-                '${widget.room['name']}  •  $phone',
+                '${room['name']}  •  $phone',
                 style: const TextStyle(fontSize: 10, color: muted),
               ),
             ],

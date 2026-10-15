@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../data/mock_data.dart';
@@ -18,7 +19,10 @@ class _AccountPageState extends State<AccountPage> {
     if (mounted) setState(() {});
   }
 
-  void _logout() {
+  Future<void> _logout() async {
+    await FirebaseAuth.instance.signOut();
+    roomList.clear();
+    if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => const LoginPage()),

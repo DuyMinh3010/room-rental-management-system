@@ -1,3 +1,6 @@
+import 'dart:async';
+import '../services/room_service.dart';
+export '../services/room_service.dart' show roomList;
 import 'package:flutter/material.dart';
 
 import 'room_detail_page.dart';
@@ -14,49 +17,6 @@ const ink = Color(0xFF172033);
 const muted = Color(0xFF61738E);
 const canvas = Color(0xFFF6F7F9);
 
-final roomList = <Map<String, String>>[
-  {
-    'name': 'P.101',
-    'status': 'Đang có người',
-    'price': '3.500.000đ/tháng',
-    'area': '25m²',
-    'people': '2 người',
-    'deposit': '3.500.000đ',
-    'billingDay': '05 hàng tháng',
-    'description': 'Phòng thoáng, có cửa sổ',
-  },
-  {
-    'name': 'P.102',
-    'status': 'Trống',
-    'price': '2.800.000đ/tháng',
-    'area': '20m²',
-    'people': '0 người',
-    'deposit': '0đ',
-    'billingDay': '05 hàng tháng',
-    'description': '',
-  },
-  {
-    'name': 'P.103',
-    'status': 'Đang có người',
-    'price': '3.200.000đ/tháng',
-    'area': '22m²',
-    'people': '3 người',
-    'deposit': '3.200.000đ',
-    'billingDay': '05 hàng tháng',
-    'description': '',
-  },
-  {
-    'name': 'P.201',
-    'status': 'Đang sửa',
-    'price': '2.500.000đ/tháng',
-    'area': '18m²',
-    'people': '0 người',
-    'deposit': '0đ',
-    'billingDay': '05 hàng tháng',
-    'description': '',
-  },
-];
-
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
   @override
@@ -66,27 +26,42 @@ class RoomPage extends StatefulWidget {
 class _RoomPageState extends State<RoomPage> {
   int filter = 0;
   String query = '';
-  final rooms = roomList;
+  List<Map<String, String>> rooms = [];
+  final service = RoomService();
+  StreamSubscription<List<Map<String, String>>>? subscription;
+  bool loading = true;
+  bool saving = false;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() {
+    subscription?.cancel();
+    setState(() { loading = true; error = null; rooms = []; });
+    try {
+      subscription = service.watchRooms().listen((value) {
+        if (!mounted) return;
+        setState(() { rooms = value; loading = false; error = null; });
+      }, onError: (Object e) {
+        if (!mounted) return;
+        setState(() { error = roomError(e); loading = false; rooms = []; roomList.clear(); });
+      });
+    } catch (e) {
+      error = roomError(e); loading = false;
+    }
+  }
 
   void _msg(String message) =>
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
   Future<void> _open(Map<String, String> room, {int tab = 0}) async {
-    final oldRoom = Map<String, String>.from(room);
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => RoomDetailPage(room: room, initialTab: tab),
-      ),
-    );
-    if (!mounted) return;
-    setState(() {
-      if (oldRoom.keys.any((key) => oldRoom[key] != room[key])) {
-        filter = 0;
-        query = '';
-        searchController.clear();
-      }
-    });
+    await Navigator.push(context, MaterialPageRoute(
+      builder: (_) => RoomDetailPage(roomId: room['id']!, initialTab: tab),
+    ));
   }
 
   Future<void> _edit([Map<String, String>? room]) async {
@@ -103,23 +78,24 @@ class _RoomPageState extends State<RoomPage> {
       ),
     );
     if (result == null || !mounted) return;
-    setState(() {
-      if (room == null) {
-        rooms.add(result);
-      } else {
-        room.addAll(result);
-      }
-      filter = 0;
-      query = '';
-      searchController.clear();
-    });
-    _msg('Đã lưu phòng ${result['name']}');
+    setState(() => saving = true);
+    try {
+      await service.save(result, id: room?['id']);
+      if (!mounted) return;
+      setState(() { filter = 0; query = ''; searchController.clear(); });
+      _msg('Đã lưu phòng ${result['name']} lên Firebase');
+    } catch (e) {
+      if (mounted) _msg(roomError(e));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
   }
 
   final searchController = TextEditingController();
 
   @override
   void dispose() {
+    subscription?.cancel();
     searchController.dispose();
     super.dispose();
   }
@@ -159,7 +135,7 @@ class _RoomPageState extends State<RoomPage> {
                       SizedBox(
                         height: 26,
                         child: FilledButton(
-                          onPressed: () => _edit(),
+                          onPressed: loading || saving || error != null ? null : () => _edit(),
                           style: FilledButton.styleFrom(
                             backgroundColor: blue,
                             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -230,7 +206,12 @@ class _RoomPageState extends State<RoomPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  if (shown.isEmpty)
+                  if (loading || saving) const LinearProgressIndicator(),
+                  if (error != null) ...[
+                    Text(error!, style: const TextStyle(color: Colors.red)),
+                    TextButton(onPressed: _load, child: const Text('Thử lại')),
+                  ],
+                  if (!loading && error == null && shown.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(24),
                       child: Center(child: Text('Không tìm thấy phòng')),

@@ -1,7 +1,7 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'room_page.dart';
-import 'register_page.dart';
 import 'account_page.dart';
 import '../data/mock_data.dart';
 
@@ -16,22 +16,48 @@ class _LoginPageState extends State<LoginPage> {
   bool isLandlord = true;
   bool hidePassword = true;
 
-  void _login() {
-    profile['role'] = isLandlord ? 'Chủ trọ' : 'Người thuê';
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => isLandlord ? const RoomPage() : const AccountPage(),
-      ),
-    );
+  final email = TextEditingController();
+  final password = TextEditingController();
+  bool signingIn = false;
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    super.dispose();
   }
 
-  void _register() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const RegisterPage()),
-    );
+  Future<void> _login() async {
+    if (signingIn) return;
+    if (email.text.trim().isEmpty || password.text.isEmpty) {
+      _message('Nhập email và mật khẩu đã tạo trong Firebase Authentication.');
+      return;
+    }
+    setState(() => signingIn = true);
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email.text.trim(), password: password.text);
+      if (!mounted) return;
+      roomList.clear();
+      profile['email'] = email.text.trim();
+      profile['role'] = isLandlord ? 'Chủ trọ' : 'Người thuê';
+      Navigator.pushReplacement(context, MaterialPageRoute(
+        builder: (_) => isLandlord ? const RoomPage() : const AccountPage(),
+      ));
+    } on FirebaseAuthException catch (e) {
+      if (mounted) _message(e.code == 'network-request-failed'
+        ? 'Không có kết nối mạng.'
+        : 'Không đăng nhập được (${e.code}). Kiểm tra email, mật khẩu và bật Email/Password trong Firebase.');
+    } finally {
+      if (mounted) setState(() => signingIn = false);
+    }
   }
+
+  void _message(String text) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(text)));
+
+  void _register() => _message(
+    'Bản kết nối phòng dùng tài khoản tạo tại Firebase Console > Authentication > Users > Add user.');
 
   @override
   Widget build(BuildContext context) {
@@ -145,6 +171,7 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 8),
 
                           TextField(
+                            controller: email,
                             keyboardType: TextInputType.emailAddress,
                             decoration: InputDecoration(
                               hintText: "@gmail.com",
@@ -185,6 +212,7 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 8),
 
                           TextField(
+                            controller: password,
                             obscureText: hidePassword,
                             decoration: InputDecoration(
                               hintText: "••••••••",
@@ -301,7 +329,7 @@ class _LoginPageState extends State<LoginPage> {
                             width: double.infinity,
                             height: 54,
                             child: ElevatedButton(
-                              onPressed: _login,
+                              onPressed: signingIn ? null : _login,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF3167E9),
                                 foregroundColor: Colors.white,
