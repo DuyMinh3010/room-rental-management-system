@@ -1,7 +1,7 @@
-import 'dart:async';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../services/maintenance_service.dart';
 import 'maint_create_page.dart';
 import 'room_page.dart';
 
@@ -14,20 +14,18 @@ class MaintenancePage extends StatefulWidget {
 
 class _MaintenancePageState extends State<MaintenancePage> {
   int _filter = 0;
-  Timer? _timer;
 
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
+  final MaintenanceService _maintenanceService = MaintenanceService();
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'Đang xử lý':
+        return const Color(0xFFF26B13);
+      case 'Hoàn thành':
+        return const Color(0xFF00A344);
+      default:
+        return const Color(0xFF2463F5);
+    }
   }
 
   Future<void> _create() async {
@@ -35,20 +33,23 @@ class _MaintenancePageState extends State<MaintenancePage> {
       context,
       MaterialPageRoute(builder: (_) => const MaintCreatePage()),
     );
+
     if (!mounted || saved != true) return;
+
     setState(() => _filter = 0);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Đã tạo yêu cầu bảo trì')));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Đã tạo yêu cầu bảo trì')),
+    );
   }
 
-  Color _color(MaintStatus status) => switch (status) {
-    MaintStatus.fresh => const Color(0xFF2463F5),
-    MaintStatus.active => const Color(0xFFF26B13),
-    MaintStatus.done => const Color(0xFF00A344),
-  };
+  Future<void> _detail(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) async {
+    final data = doc.data();
+    final status = (data['status'] ?? 'Mới').toString();
 
-  Future<void> _detail(MaintReq req) async {
-    final status = await showModalBottomSheet<MaintStatus>(
+    final nextStatus = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
@@ -56,203 +57,241 @@ class _MaintenancePageState extends State<MaintenancePage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            20 + MediaQuery.viewInsetsOf(ctx).bottom,
-          ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                req.title,
+                (data['title'] ?? '').toString(),
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: ink,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(req.location, style: const TextStyle(color: muted)),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
-                '${req.type} · ${req.priority.label}',
-                style: const TextStyle(color: muted, fontSize: 12),
+                'Phòng: ${(data['room'] ?? '').toString()}',
+                style: const TextStyle(color: muted),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Người thuê: ${(data['tenantName'] ?? 'Chưa xác định').toString()}',
+                style: const TextStyle(color: muted),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                (data['description'] ?? '').toString(),
+                style: const TextStyle(color: ink),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Trạng thái: $status',
+                style: TextStyle(color: _statusColor(status)),
               ),
               const SizedBox(height: 16),
-              Text(req.desc, style: const TextStyle(color: ink)),
-              if (req.photos.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: req.photos
-                      .map(
-                        (p) => ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.memory(
-                            p,
-                            width: 96,
-                            height: 96,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, error, stack) => const SizedBox(
-                              width: 96,
-                              height: 96,
-                              child: Icon(Icons.broken_image_outlined),
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Text(
-                'Trạng thái: ${req.status.label}',
-                style: TextStyle(color: _color(req.status), fontSize: 12),
-              ),
-              if (req.status != MaintStatus.done) ...[
-                const SizedBox(height: 12),
+              if (status == 'Mới')
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
-                    onPressed: () => Navigator.pop(
-                      ctx,
-                      req.status == MaintStatus.fresh
-                          ? MaintStatus.active
-                          : MaintStatus.done,
-                    ),
+                    onPressed: () => Navigator.pop(ctx, 'Đang xử lý'),
                     style: FilledButton.styleFrom(backgroundColor: blue),
-                    child: Text(
-                      req.status == MaintStatus.fresh
-                          ? 'Tiếp nhận yêu cầu'
-                          : 'Hoàn thành',
-                    ),
+                    child: const Text('Tiếp nhận yêu cầu'),
                   ),
                 ),
-              ],
+              if (status == 'Đang xử lý')
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, 'Hoàn thành'),
+                    style: FilledButton.styleFrom(backgroundColor: blue),
+                    child: const Text('Hoàn thành'),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
-    if (!mounted || status == null) return;
-    maintStore.setStatus(req.id, status);
+
+    if (!mounted || nextStatus == null) return;
+
+    try {
+      await _maintenanceService.updateMaintenanceStatus(
+        documentId: doc.id,
+        status: nextStatus,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Đã cập nhật: $nextStatus')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể cập nhật trạng thái: $e')),
+      );
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF7F8FA),
-    body: SafeArea(
-      child: Column(
-        children: [
-          Expanded(
-            child: ValueListenableBuilder<List<MaintReq>>(
-              valueListenable: maintStore,
-              builder: (_, rows, child) {
-                final shown = rows.where(
-                  (r) =>
-                      _filter == 0 ||
-                      r.status ==
-                          (_filter == 1
-                              ? MaintStatus.fresh
-                              : MaintStatus.active),
-                );
-                final counts = [
-                  rows.length,
-                  rows.where((r) => r.status == MaintStatus.fresh).length,
-                  rows.where((r) => r.status == MaintStatus.active).length,
-                ];
-                return ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 26, 20, 90),
-                  children: [
-                    const Text(
-                      'Bảo trì',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: ink,
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F8FA),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: _maintenanceService.getMaintenanceRequests(),
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return const Center(
+                      child: Text('Không thể tải danh sách bảo trì'),
+                    );
+                  }
+
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(),
+                    );
+                  }
+
+                  final docs = snapshot.data?.docs ?? [];
+
+                  final freshCount = docs
+                      .where(
+                        (doc) => (doc.data()['status'] ?? 'Mới') == 'Mới',
+                      )
+                      .length;
+
+                  final activeCount = docs
+                      .where(
+                        (doc) =>
+                            (doc.data()['status'] ?? 'Mới') == 'Đang xử lý',
+                      )
+                      .length;
+
+                  final shown = docs.where((doc) {
+                    final status = (doc.data()['status'] ?? 'Mới').toString();
+
+                    if (_filter == 1) return status == 'Mới';
+                    if (_filter == 2) return status == 'Đang xử lý';
+
+                    return true;
+                  }).toList();
+
+                  return ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 26, 20, 90),
+                    children: [
+                      const Text(
+                        'Bảo trì',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: ink,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 7),
-                    const Text(
-                      'Theo dõi yêu cầu sửa chữa',
-                      style: TextStyle(fontSize: 12, color: muted),
-                    ),
-                    const SizedBox(height: 29),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: List.generate(
-                          3,
-                          (i) => Padding(
-                            padding: const EdgeInsets.only(right: 22),
-                            child: InkWell(
-                              onTap: () => setState(() => _filter = i),
-                              borderRadius: BorderRadius.circular(14),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _filter == i ? blue : Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: Text(
-                                  '${['Tất cả', 'Mới', 'Đang xử lý'][i]} ${counts[i]}',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: _filter == i ? Colors.white : muted,
-                                  ),
-                                ),
-                              ),
+                      const SizedBox(height: 7),
+                      const Text(
+                        'Theo dõi yêu cầu sửa chữa',
+                        style: TextStyle(fontSize: 12, color: muted),
+                      ),
+                      const SizedBox(height: 29),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _filterItem('Tất cả', docs.length, 0),
+                            _filterItem('Mới', freshCount, 1),
+                            _filterItem('Đang xử lý', activeCount, 2),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      if (shown.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 30),
+                          child: Center(
+                            child: Text(
+                              'Chưa có yêu cầu bảo trì',
+                              style: TextStyle(color: muted, fontSize: 12),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    if (shown.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 30),
-                        child: Center(
-                          child: Text(
-                            'Chưa có yêu cầu bảo trì',
-                            style: TextStyle(color: muted, fontSize: 12),
-                          ),
-                        ),
-                      ),
-                    ...shown.map(_card),
-                  ],
-                );
-              },
+                      ...shown.map(_card),
+                    ],
+                  );
+                },
+              ),
             ),
-          ),
-          const AppBottomBar(selected: 5),
-        ],
-      ),
-    ),
-    floatingActionButton: Padding(
-      padding: const EdgeInsets.only(bottom: 76, right: 12),
-      child: SizedBox(
-        width: 58,
-        height: 58,
-        child: FloatingActionButton(
-          onPressed: _create,
-          backgroundColor: blue,
-          foregroundColor: Colors.white,
-          shape: const CircleBorder(),
-          child: const Icon(Icons.add, size: 28),
+            const AppBottomBar(selected: 5),
+          ],
         ),
       ),
-    ),
-  );
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 76, right: 12),
+        child: SizedBox(
+          width: 58,
+          height: 58,
+          child: FloatingActionButton(
+            onPressed: _create,
+            backgroundColor: blue,
+            foregroundColor: Colors.white,
+            shape: const CircleBorder(),
+            child: const Icon(Icons.add, size: 28),
+          ),
+        ),
+      ),
+    );
+  }
 
-  Widget _card(MaintReq req) {
-    final color = _color(req.status);
+  Widget _filterItem(String label, int count, int index) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: InkWell(
+        onTap: () => setState(() => _filter = index),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: _filter == index ? blue : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Text(
+            '$label $count',
+            style: TextStyle(
+              fontSize: 10,
+              color: _filter == index ? Colors.white : muted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _card(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data();
+    final status = (data['status'] ?? 'Mới').toString();
+    final color = _statusColor(status);
+    final updatedAt = data['updatedAt'];
+
+    String updatedText = 'Chưa cập nhật';
+
+    if (updatedAt is Timestamp) {
+      final date = updatedAt.toDate();
+      updatedText =
+          '${date.day.toString().padLeft(2, '0')}/'
+          '${date.month.toString().padLeft(2, '0')}/'
+          '${date.year} '
+          '${date.hour.toString().padLeft(2, '0')}:'
+          '${date.minute.toString().padLeft(2, '0')}';
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
@@ -260,15 +299,15 @@ class _MaintenancePageState extends State<MaintenancePage> {
         borderRadius: BorderRadius.circular(16),
       ),
       child: InkWell(
-        onTap: () => _detail(req),
+        onTap: () => _detail(doc),
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                req.title,
+                (data['title'] ?? '').toString(),
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -277,12 +316,13 @@ class _MaintenancePageState extends State<MaintenancePage> {
               ),
               const SizedBox(height: 11),
               Text(
-                req.location,
+                'Phòng ${(data['room'] ?? '').toString()} · '
+                '${(data['tenantName'] ?? 'Chưa xác định').toString()}',
                 style: const TextStyle(fontSize: 10, color: muted),
               ),
               const SizedBox(height: 13),
               Text(
-                'Cập nhật: ${maintTime(req.updated)}',
+                'Cập nhật: $updatedText',
                 style: const TextStyle(fontSize: 10, color: muted),
               ),
               const SizedBox(height: 11),
@@ -298,7 +338,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(
-                      req.status.label,
+                      status,
                       style: TextStyle(fontSize: 10, color: color),
                     ),
                   ),

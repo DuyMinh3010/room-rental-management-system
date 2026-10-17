@@ -1,7 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 
+import '../services/maintenance_service.dart';
 import 'room_page.dart';
 
 class MaintCreatePage extends StatefulWidget {
@@ -12,30 +11,16 @@ class MaintCreatePage extends StatefulWidget {
 }
 
 class _MaintCreatePageState extends State<MaintCreatePage> {
-  final _form = GlobalKey<FormState>();
+  final _maintenanceService = MaintenanceService();
   final _title = TextEditingController();
   final _desc = TextEditingController();
-  final _photos = <Uint8List>[];
-  late final List<String> _rooms;
-  String? _room;
-  String _type = 'Thiết bị';
-  MaintPriority _priority = MaintPriority.medium;
-  bool _picking = false;
-  bool _sent = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _rooms = roomList
-        .map((r) => r['name'])
-        .whereType<String>()
-        .where((n) => n.trim().isNotEmpty)
-        .toSet()
-        .toList();
-    if (_rooms.isNotEmpty) {
-      _room = _rooms.contains('P.102') ? 'P.102' : _rooms.first;
-    }
-  }
+  static const _categories = ['Thiết bị', 'Điện', 'Nước', 'Khác'];
+
+  String? _room;
+  String _category = 'Thiết bị';
+  String _priority = 'medium';
+  bool _sent = false;
 
   @override
   void dispose() {
@@ -44,485 +29,280 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
     super.dispose();
   }
 
-  void _msg(String text) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-
-  void _pick() {
-    _msg('Đây là giao diện chọn ảnh. Chức năng chọn ảnh sẽ bổ sung sau.');
+  void _msg(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _send() {
-    if (_sent || _picking || !(_form.currentState?.validate() ?? false)) return;
+  String _tenantOf(Map<String, String> r) {
+    final t = (r['tenant'] ?? r['tenantName'] ?? '').trim();
+    return t;
+  }
+
+  Future<void> _send() async {
+    if (_sent) return;
+
     final room = _room;
-    if (room == null || !roomList.any((r) => r['name'] == room)) {
+    if (room == null) {
+      _msg('Vui lòng chọn phòng');
+      return;
+    }
+    if (_title.text.trim().isEmpty) {
+      _msg('Vui lòng nhập tiêu đề');
+      return;
+    }
+    if (!roomList.any((r) => r['name'] == room)) {
       _msg('Phòng không còn tồn tại. Vui lòng mở lại màn hình');
       return;
     }
+
+    final roomData = roomList.firstWhere((r) => r['name'] == room);
+    final tenant = _tenantOf(roomData);
+
     setState(() => _sent = true);
-    maintStore.add(
-      room: room,
-      type: _type,
-      title: _title.text,
-      desc: _desc.text,
-      priority: _priority,
-      photos: _photos,
-    );
-    Navigator.pop(context, true);
+
+    try {
+      await _maintenanceService.addMaintenanceRequest(
+        title: _title.text.trim(),
+        description: _desc.text.trim(),
+        room: room,
+        tenantName: tenant.isEmpty ? 'Chưa xác định' : tenant,
+        category: _category,
+        priority: _priority,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sent = false);
+      _msg('Gửi thất bại: $e');
+    }
   }
 
-  InputDecoration _deco({String? hint}) => InputDecoration(
-    hintText: hint,
-    hintStyle: const TextStyle(fontSize: 12, color: muted),
-    filled: true,
-    fillColor: Colors.white,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: blue),
-    ),
-    errorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Colors.red),
-    ),
-  );
+  InputDecoration _fieldDecoration({String? hint}) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: muted, fontSize: 13),
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    );
+  }
 
-  Widget _label(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 5),
-    child: Text(text, style: const TextStyle(fontSize: 10, color: muted)),
-  );
+  Widget _label(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16, bottom: 6),
+      child: Text(text, style: const TextStyle(fontSize: 11, color: muted)),
+    );
+  }
+
+  Widget _priorityChip(String label, String value, Color color) {
+    final selected = _priority == value;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: () => setState(() => _priority = value),
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? color : color.withValues(alpha: .12),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : color,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF7F8FA),
-    body: SafeArea(
-      child: Column(
-        children: [
-          Expanded(
-            child: Form(
-              key: _form,
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: canvas,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
                 children: [
                   Row(
                     children: [
-                      SizedBox(
-                        width: 30,
-                        height: 34,
-                        child: IconButton(
-                          padding: EdgeInsets.zero,
-                          alignment: Alignment.centerLeft,
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(
-                            Icons.chevron_left,
-                            color: ink,
-                            size: 28,
-                          ),
-                        ),
+                      InkWell(
+                        onTap: () => Navigator.pop(context),
+                        child: const Icon(Icons.chevron_left, color: ink),
                       ),
-                      const Expanded(
-                        child: Text(
-                          'Tạo yêu cầu bảo trì',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            color: ink,
-                          ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Tạo yêu cầu bảo trì',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: ink,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   const Text(
                     'Gửi yêu cầu sửa chữa đến chủ trọ',
-                    style: TextStyle(fontSize: 12, color: muted),
+                    style: TextStyle(fontSize: 11, color: muted),
                   ),
-                  const SizedBox(height: 23),
+                  const SizedBox(height: 20),
                   const Text(
                     'Thông tin yêu cầu',
                     style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
                       color: ink,
                     ),
                   ),
-                  const SizedBox(height: 10),
+
                   _label('Phòng'),
                   DropdownButtonFormField<String>(
-                    value: _room,
+                    initialValue: _room,
                     isExpanded: true,
-                    decoration: _deco(hint: 'Chọn phòng'),
-                    style: const TextStyle(fontSize: 13, color: ink),
-                    icon: const Icon(
-                      Icons.keyboard_arrow_down,
-                      size: 20,
-                      color: muted,
-                    ),
-                    items: _rooms
-                        .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                        .toList(),
+                    decoration: _fieldDecoration(hint: 'Chọn phòng'),
+                    items: roomList.map((r) {
+                      final name = r['name'] ?? '';
+                      final tenant = _tenantOf(r);
+                      return DropdownMenuItem<String>(
+                        value: name,
+                        child: Text(
+                          tenant.isEmpty ? name : '$name · $tenant',
+                          style: const TextStyle(fontSize: 13, color: ink),
+                        ),
+                      );
+                    }).toList(),
                     onChanged: (v) => setState(() => _room = v),
-                    validator: (v) => v == null ? 'Vui lòng chọn phòng' : null,
                   ),
-                  const SizedBox(height: 12),
+
                   _label('Loại sự cố'),
                   DropdownButtonFormField<String>(
-                    value: _type,
+                    initialValue: _category,
                     isExpanded: true,
-                    decoration: _deco(),
-                    style: const TextStyle(fontSize: 13, color: ink),
-                    icon: const Icon(
-                      Icons.keyboard_arrow_down,
-                      size: 20,
-                      color: muted,
-                    ),
-                    items: const ['Thiết bị', 'Điện', 'Nước', 'Khác']
-                        .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                    decoration: _fieldDecoration(),
+                    items: _categories
+                        .map((c) => DropdownMenuItem<String>(
+                              value: c,
+                              child: Text(
+                                c,
+                                style: const TextStyle(
+                                    fontSize: 13, color: ink),
+                              ),
+                            ))
                         .toList(),
-                    onChanged: (v) {
-                      if (v != null) setState(() => _type = v);
-                    },
+                    onChanged: (v) =>
+                        setState(() => _category = v ?? _category),
                   ),
-                  const SizedBox(height: 12),
+
                   _label('Tiêu đề'),
-                  TextFormField(
+                  TextField(
                     controller: _title,
-                    style: const TextStyle(fontSize: 13, color: ink),
-                    decoration: _deco(hint: 'Máy lạnh không mát'),
-                    textInputAction: TextInputAction.next,
-                    validator: (v) {
-                      final text = (v ?? '').trim();
-                      if (text.isEmpty) return 'Vui lòng nhập tiêu đề';
-                      if (text.length > 100) return 'Tiêu đề tối đa 100 ký tự';
-                      return null;
-                    },
+                    style: const TextStyle(fontSize: 13),
+                    decoration: _fieldDecoration(hint: 'Ví dụ: Máy lạnh không mát'),
                   ),
-                  const SizedBox(height: 12),
+
                   _label('Mô tả chi tiết'),
-                  TextFormField(
+                  TextField(
                     controller: _desc,
-                    style: const TextStyle(fontSize: 12, color: ink),
-                    minLines: 2,
                     maxLines: 4,
                     maxLength: 200,
-                    decoration: _deco(
-                      hint: 'Máy lạnh phòng P.102 bật nhưng không làm mát...',
+                    style: const TextStyle(fontSize: 13),
+                    decoration: _fieldDecoration(
+                      hint: 'Mô tả sự cố bạn đang gặp...',
                     ),
-                    buildCounter:
-                        (
-                          _, {
-                          required currentLength,
-                          required isFocused,
-                          maxLength,
-                        }) => Text(
-                          '$currentLength/200',
-                          style: const TextStyle(fontSize: 9, color: muted),
-                        ),
-                    validator: (v) => (v ?? '').trim().isEmpty
-                        ? 'Vui lòng nhập mô tả sự cố'
-                        : null,
                   ),
-                  const SizedBox(height: 12),
+
                   _label('Mức độ ưu tiên'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: MaintPriority.values.map(_chip).toList(),
+                  Row(
+                    children: [
+                      _priorityChip('Thấp', 'low', muted),
+                      _priorityChip(
+                          'Trung bình', 'medium', const Color(0xFFF26B13)),
+                      _priorityChip(
+                          'Khẩn cấp', 'urgent', const Color(0xFFE5484D)),
+                    ],
                   ),
-                  const SizedBox(height: 16),
+
                   _label('Ảnh hiện trạng'),
-                  InkWell(
-                    onTap: _picking ? null : _pick,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      height: 58,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _picking ? Icons.hourglass_empty : Icons.add,
-                            color: muted,
-                            size: 22,
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.add, color: blue),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Thêm ảnh (tối đa 3 ảnh)',
+                                style: TextStyle(fontSize: 13, color: ink),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'JPG, PNG - không bắt buộc',
+                                style: TextStyle(fontSize: 10, color: muted),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 14),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Thêm ảnh (tối đa 3 ảnh)',
-                                  style: TextStyle(fontSize: 12, color: ink),
-                                ),
-                                SizedBox(height: 4),
-                                Text(
-                                  'JPG, PNG · không bắt buộc',
-                                  style: TextStyle(fontSize: 9, color: muted),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                  if (_photos.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: List.generate(
-                        _photos.length,
-                        (i) => Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(
-                                _photos[i],
-                                width: 88,
-                                height: 88,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, error, stack) =>
-                                    const SizedBox(
-                                      width: 88,
-                                      height: 88,
-                                      child: Icon(Icons.broken_image_outlined),
-                                    ),
-                              ),
-                            ),
-                            Positioned(
-                              top: 0,
-                              right: 0,
-                              child: IconButton(
-                                onPressed: _picking
-                                    ? null
-                                    : () => setState(() => _photos.removeAt(i)),
-                                icon: const Icon(
-                                  Icons.cancel,
-                                  color: Colors.red,
-                                  size: 20,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 18),
+
+                  const SizedBox(height: 22),
                   SizedBox(
-                    height: 52,
+                    height: 48,
                     child: FilledButton(
-                      onPressed: _sent || _picking ? null : _send,
+                      onPressed: _sent ? null : _send,
                       style: FilledButton.styleFrom(
                         backgroundColor: blue,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(24),
                         ),
                       ),
-                      child: const Text(
-                        'Gửi yêu cầu',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      child: _sent
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Gửi yêu cầu'),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   const Text(
                     'Yêu cầu sẽ được gửi đến chủ trọ để xác nhận.',
-                    style: TextStyle(fontSize: 9, color: muted),
+                    style: TextStyle(fontSize: 10, color: muted),
                   ),
                 ],
               ),
             ),
-          ),
-          AppBottomBar(
-            selected: 5,
-            onSelected: (i) {
-              if (i != 5) return false;
-              Navigator.pop(context);
-              return true;
-            },
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _chip(MaintPriority priority) {
-    final selected = priority == _priority;
-    final color = switch (priority) {
-      MaintPriority.low => blue,
-      MaintPriority.medium => const Color(0xFFF26B13),
-      MaintPriority.urgent => const Color(0xFFE74747),
-    };
-    return InkWell(
-      onTap: () => setState(() => _priority = priority),
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected ? color.withValues(alpha: .10) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Text(
-          priority.label,
-          style: TextStyle(fontSize: 10, color: selected ? color : muted),
+            const AppBottomBar(selected: 5),
+          ],
         ),
       ),
     );
   }
-}
-
-enum MaintStatus {
-  fresh('Mới'),
-  active('Đang xử lý'),
-  done('Hoàn thành');
-
-  final String label;
-  const MaintStatus(this.label);
-}
-
-enum MaintPriority {
-  low('Thấp'),
-  medium('Trung bình'),
-  urgent('Khẩn cấp');
-
-  final String label;
-  const MaintPriority(this.label);
-}
-
-class MaintReq {
-  final int id;
-  final String room;
-  final String reporter;
-  final String type;
-  final String title;
-  final String desc;
-  final MaintPriority priority;
-  final MaintStatus status;
-  final DateTime updated;
-  final List<Uint8List> photos;
-
-  MaintReq({
-    required this.id,
-    required this.room,
-    this.reporter = '',
-    required this.type,
-    required this.title,
-    required this.desc,
-    this.priority = MaintPriority.medium,
-    this.status = MaintStatus.fresh,
-    required this.updated,
-    List<Uint8List> photos = const [],
-  }) : photos = List.unmodifiable(
-         photos.map((p) => Uint8List.fromList(p).asUnmodifiableView()),
-       );
-
-  String get location => reporter.isEmpty ? room : '$room · $reporter';
-
-  MaintReq withStatus(MaintStatus value) => MaintReq(
-    id: id,
-    room: room,
-    reporter: reporter,
-    type: type,
-    title: title,
-    desc: desc,
-    priority: priority,
-    status: value,
-    updated: DateTime.now(),
-    photos: photos,
-  );
-}
-
-class MaintStore extends ValueNotifier<List<MaintReq>> {
-  MaintStore() : super(List.unmodifiable(_seed()));
-  int _nextId = 4;
-
-  void add({
-    required String room,
-    required String type,
-    required String title,
-    required String desc,
-    required MaintPriority priority,
-    required List<Uint8List> photos,
-  }) {
-    final req = MaintReq(
-      id: _nextId++,
-      room: room,
-      type: type,
-      title: title.trim(),
-      desc: desc.trim(),
-      priority: priority,
-      photos: photos,
-      updated: DateTime.now(),
-    );
-    value = List.unmodifiable([req, ...value]);
-  }
-
-  void setStatus(int id, MaintStatus status) {
-    final idx = value.indexWhere((r) => r.id == id);
-    if (idx < 0 || value[idx].status == status) return;
-    final rows = [...value];
-    rows[idx] = rows[idx].withStatus(status);
-    value = List.unmodifiable(rows);
-  }
-
-  static List<MaintReq> _seed() {
-    final now = DateTime.now();
-    return [
-      MaintReq(
-        id: 1,
-        room: 'P.102',
-        reporter: 'Nguyễn Minh Huy',
-        type: 'Thiết bị',
-        title: 'Máy lạnh không mát',
-        desc: 'Máy lạnh bật nhưng không làm mát.',
-        updated: now.subtract(const Duration(minutes: 10)),
-      ),
-      MaintReq(
-        id: 2,
-        room: 'P.201',
-        reporter: 'Lê Thị Mai',
-        type: 'Nước',
-        title: 'Rò rỉ vòi nước',
-        desc: 'Vòi nước bị rò rỉ khi đã khóa.',
-        status: MaintStatus.active,
-        updated: now.subtract(const Duration(days: 1)),
-      ),
-      MaintReq(
-        id: 3,
-        room: 'Khu A · Tầng 2',
-        type: 'Điện',
-        title: 'Đèn hành lang hỏng',
-        desc: 'Đèn hành lang không sáng.',
-        status: MaintStatus.done,
-        updated: now.subtract(const Duration(days: 2)),
-      ),
-    ];
-  }
-}
-
-final maintStore = MaintStore();
-
-String maintTime(DateTime date) {
-  final diff = DateTime.now().difference(date);
-  if (diff.inMinutes < 1) return 'vừa xong';
-  if (diff.inHours < 1) return '${diff.inMinutes} phút trước';
-  if (diff.inDays < 1) return '${diff.inHours} giờ trước';
-  if (diff.inDays == 1) return 'hôm qua';
-  return '${diff.inDays} ngày trước';
 }

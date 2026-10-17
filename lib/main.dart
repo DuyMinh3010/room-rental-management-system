@@ -6,15 +6,12 @@ import 'screens/login_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    runApp(const MyApp());
-  } catch (e) {
-    runApp(MaterialApp(home: Scaffold(body: Center(child: Padding(
-      padding: const EdgeInsets.all(24),
-      child: Text('Chưa khởi tạo được Firebase. Hãy chạy flutterfire configure theo HUONG_DAN.md rồi mở lại ứng dụng.\n$e'),
-    )))));
-  }
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
