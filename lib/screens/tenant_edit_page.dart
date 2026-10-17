@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
-
-import '../widgets/form_widgets.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../widgets/form_widgets.dart';
 
 class TenantEditPage extends StatefulWidget {
   final Map<String, String> tenant;
-  const TenantEditPage({super.key, required this.tenant});
+
+  const TenantEditPage({
+    super.key,
+    required this.tenant,
+  });
+
   @override
   State<TenantEditPage> createState() => _TenantEditPageState();
 }
@@ -13,6 +17,7 @@ class TenantEditPage extends StatefulWidget {
 class _TenantEditPageState extends State<TenantEditPage> {
   final formKey = GlobalKey<FormState>();
   final fields = <String, TextEditingController>{};
+
   final labels = const {
     'name': 'Họ và tên',
     'birthday': 'Ngày sinh',
@@ -23,14 +28,21 @@ class _TenantEditPageState extends State<TenantEditPage> {
     'job': 'Nghề nghiệp',
     'note': 'Ghi chú',
   };
+
   String gender = 'Nam';
   String residence = 'Chưa đăng ký';
+  bool isSaving = false;
+
   @override
   void initState() {
     super.initState();
+
     for (final key in labels.keys) {
-      fields[key] = TextEditingController(text: widget.tenant[key] ?? '');
+      fields[key] = TextEditingController(
+        text: widget.tenant[key] ?? '',
+      );
     }
+
     gender = ['Nam', 'Nữ', 'Khác'].contains(widget.tenant['gender'])
         ? widget.tenant['gender']!
         : 'Nam';
@@ -43,15 +55,18 @@ class _TenantEditPageState extends State<TenantEditPage> {
 
   @override
   void dispose() {
-    for (final c in fields.values) {
-      c.dispose();
+    for (final controller in fields.values) {
+      controller.dispose();
     }
     super.dispose();
   }
 
-
   Future<void> _save() async {
+    if (isSaving) return;
+
     if (!formKey.currentState!.validate()) return;
+
+    setState(() => isSaving = true);
 
     final result = Map<String, String>.from(widget.tenant);
 
@@ -64,66 +79,71 @@ class _TenantEditPageState extends State<TenantEditPage> {
 
     try {
       final contracts =
-      FirebaseFirestore.instance.collection('contracts');
+          FirebaseFirestore.instance.collection('contracts');
 
-      final contractId =
-      (widget.tenant['contract'] ?? '').trim();
+      // Ưu tiên document ID nếu danh sách đã truyền ID này.
+      final documentId = (widget.tenant['documentId'] ?? '').trim();
+      final contractId = (widget.tenant['contract'] ?? '').trim();
 
-      final oldName =
-      (widget.tenant['name'] ?? '').trim();
+      DocumentReference<Map<String, dynamic>>? contractRef;
 
-      final room =
-      (widget.tenant['room'] ?? '').trim();
+      // 1. Tìm trực tiếp theo document ID.
+      if (documentId.isNotEmpty) {
+        final doc = await contracts.doc(documentId).get();
 
-      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
+        if (doc.exists) {
+          contractRef = doc.reference;
+        }
+      }
 
-      // 1. Tìm theo mã hợp đồng
-      if (contractId.isNotEmpty) {
-        final resultById = await contracts
+      // 2. Nếu chưa có document ID, tìm theo trường id.
+      if (contractRef == null && contractId.isNotEmpty) {
+        final query = await contracts
             .where('id', isEqualTo: contractId)
             .limit(1)
             .get();
 
-        if (resultById.docs.isNotEmpty) {
-          contractDoc = resultById.docs.first;
+        if (query.docs.isNotEmpty) {
+          contractRef = query.docs.first.reference;
         }
       }
 
-      // 2. Nếu không tìm thấy theo mã, thử tìm theo tên người thuê
-      if (contractDoc == null && oldName.isNotEmpty) {
-        final resultByName = await contracts
-            .where('name', isEqualTo: oldName)
-            .get();
+      // 3. Tương thích dữ liệu cũ: tìm theo tên và phòng.
+      if (contractRef == null) {
+        final oldName = (widget.tenant['name'] ?? '').trim();
+        final room = (widget.tenant['room'] ?? '').trim();
 
-        if (resultByName.docs.isNotEmpty) {
-          final sameRoom = resultByName.docs.where((doc) {
-            return (doc.data()['room'] ?? '')
-                .toString()
-                .trim() ==
-                room;
+        if (oldName.isNotEmpty) {
+          final query = await contracts
+              .where('name', isEqualTo: oldName)
+              .get();
+
+          final matches = query.docs.where((doc) {
+            return (doc.data()['room'] ?? '').toString().trim() == room;
           }).toList();
 
-          contractDoc = sameRoom.isNotEmpty
-              ? sameRoom.first
-              : resultByName.docs.first;
+          if (matches.length == 1) {
+            contractRef = matches.first.reference;
+          } else if (matches.isNotEmpty && room.isEmpty) {
+            // Không đoán nếu có nhiều hợp đồng cùng tên.
+            if (matches.length == 1) {
+              contractRef = matches.first.reference;
+            }
+          } else if (query.docs.length == 1) {
+            contractRef = query.docs.first.reference;
+          }
         }
       }
 
-      if (contractDoc == null) {
-        if (!mounted) return;
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Không tìm thấy hợp đồng. Hãy kiểm tra trường id, name và room trên Firebase.',
-            ),
-          ),
+      if (contractRef == null) {
+        throw Exception(
+          'Không xác định được hợp đồng cần cập nhật. '
+          'Cần truyền documentId từ danh sách người thuê.',
         );
-        return;
       }
 
-      // 3. Cập nhật thông tin người thuê vào hợp đồng tìm được
-      await contractDoc.reference.update({
+      // Cập nhật các trường thông tin người thuê.
+      await contractRef.update({
         'name': result['name'] ?? '',
         'phone': result['phone'] ?? '',
         'email': result['email'] ?? '',
@@ -139,6 +159,12 @@ class _TenantEditPageState extends State<TenantEditPage> {
 
       if (!mounted) return;
 
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã cập nhật thông tin người thuê lên Firebase.'),
+        ),
+      );
+
       Navigator.pop(context, result);
     } catch (e) {
       if (!mounted) return;
@@ -148,14 +174,19 @@ class _TenantEditPageState extends State<TenantEditPage> {
           content: Text('Lưu thông tin thất bại: $e'),
         ),
       );
+    } finally {
+      if (mounted) {
+        setState(() => isSaving = false);
+      }
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Chỉnh sửa người thuê')),
+      appBar: AppBar(
+        title: const Text('Chỉnh sửa người thuê'),
+      ),
       body: Form(
         key: formKey,
         child: ListView(
@@ -169,26 +200,46 @@ class _TenantEditPageState extends State<TenantEditPage> {
               ),
             DropdownButtonFormField<String>(
               value: gender,
-              decoration: const InputDecoration(labelText: 'Giới tính'),
-              items: [
-                'Nam',
-                'Nữ',
-                'Khác',
-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-              onChanged: (v) => setState(() => gender = v!),
+              decoration: const InputDecoration(
+                labelText: 'Giới tính',
+              ),
+              items: ['Nam', 'Nữ', 'Khác']
+                  .map(
+                    (v) => DropdownMenuItem(
+                      value: v,
+                      child: Text(v),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => gender = v);
+              },
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: residence,
-              decoration: const InputDecoration(labelText: 'Tạm trú'),
-              items: [
-                'Chưa đăng ký',
-                'Đã đăng ký',
-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-              onChanged: (v) => setState(() => residence = v!),
+              decoration: const InputDecoration(
+                labelText: 'Tạm trú',
+              ),
+              items: ['Chưa đăng ký', 'Đã đăng ký']
+                  .map(
+                    (v) => DropdownMenuItem(
+                      value: v,
+                      child: Text(v),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => residence = v);
+              },
             ),
             const SizedBox(height: 24),
-            FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),
+            FilledButton(
+              onPressed: isSaving ? null : _save,
+              child: Text(
+                isSaving ? 'Đang lưu...' : 'Lưu thay đổi',
+              ),
+            ),
           ],
         ),
       ),

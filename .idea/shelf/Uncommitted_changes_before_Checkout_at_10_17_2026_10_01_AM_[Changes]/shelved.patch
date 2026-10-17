@@ -1,0 +1,900 @@
+Index: lib/screens/tenant_edit_page.dart
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import 'package:flutter/material.dart';\r\n\r\nimport '../widgets/form_widgets.dart';\r\n\r\nclass TenantEditPage extends StatefulWidget {\r\n  final Map<String, String> tenant;\r\n  const TenantEditPage({super.key, required this.tenant});\r\n  @override\r\n  State<TenantEditPage> createState() => _TenantEditPageState();\r\n}\r\n\r\nclass _TenantEditPageState extends State<TenantEditPage> {\r\n  final formKey = GlobalKey<FormState>();\r\n  final fields = <String, TextEditingController>{};\r\n  final labels = const {\r\n    'name': 'Họ và tên',\r\n    'birthday': 'Ngày sinh',\r\n    'phone': 'Số điện thoại',\r\n    'email': 'Email',\r\n    'identity': 'CCCD/Passport',\r\n    'address': 'Quê quán',\r\n    'job': 'Nghề nghiệp',\r\n    'note': 'Ghi chú',\r\n  };\r\n  String gender = 'Nam';\r\n  String residence = 'Chưa đăng ký';\r\n  @override\r\n  void initState() {\r\n    super.initState();\r\n    for (final key in labels.keys) {\r\n      fields[key] = TextEditingController(text: widget.tenant[key] ?? '');\r\n    }\r\n    gender = widget.tenant['gender'] ?? 'Nam';\r\n    residence = widget.tenant['residence'] ?? 'Chưa đăng ký';\r\n  }\r\n\r\n  @override\r\n  void dispose() {\r\n    for (final c in fields.values) {\r\n      c.dispose();\r\n    }\r\n    super.dispose();\r\n  }\r\n\r\n  void _save() {\r\n    if (!formKey.currentState!.validate()) return;\r\n    final result = Map<String, String>.from(widget.tenant);\r\n    for (final key in fields.keys) {\r\n      result[key] = fields[key]!.text.trim();\r\n    }\r\n    result['gender'] = gender;\r\n    result['residence'] = residence;\r\n    Navigator.pop(context, result);\r\n  }\r\n\r\n  @override\r\n  Widget build(BuildContext context) {\r\n    return Scaffold(\r\n      appBar: AppBar(title: const Text('Chỉnh sửa người thuê')),\r\n      body: Form(\r\n        key: formKey,\r\n        child: ListView(\r\n          padding: const EdgeInsets.all(20),\r\n          children: [\r\n            for (final key in labels.keys)\r\n              FormInput(\r\n                labels[key]!,\r\n                fields[key]!,\r\n                requiredField: key == 'name' || key == 'phone',\r\n              ),\r\n            DropdownButtonFormField<String>(\r\n              value: gender,\r\n              decoration: const InputDecoration(labelText: 'Giới tính'),\r\n              items: [\r\n                'Nam',\r\n                'Nữ',\r\n                'Khác',\r\n              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),\r\n              onChanged: (v) => setState(() => gender = v!),\r\n            ),\r\n            const SizedBox(height: 16),\r\n            DropdownButtonFormField<String>(\r\n              value: residence,\r\n              decoration: const InputDecoration(labelText: 'Tạm trú'),\r\n              items: [\r\n                'Chưa đăng ký',\r\n                'Đã đăng ký',\r\n              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),\r\n              onChanged: (v) => setState(() => residence = v!),\r\n            ),\r\n            const SizedBox(height: 24),\r\n            FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),\r\n          ],\r\n        ),\r\n      ),\r\n    );\r\n  }\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/lib/screens/tenant_edit_page.dart b/lib/screens/tenant_edit_page.dart
+--- a/lib/screens/tenant_edit_page.dart	(revision fc61e5cf85138665dbfd8275e7549908dc50dd1d)
++++ b/lib/screens/tenant_edit_page.dart	(date 1792205806637)
+@@ -1,10 +1,17 @@
++
+ import 'package:flutter/material.dart';
+ 
++import '../services/tenant_service.dart';
+ import '../widgets/form_widgets.dart';
+ 
+ class TenantEditPage extends StatefulWidget {
+   final Map<String, String> tenant;
+-  const TenantEditPage({super.key, required this.tenant});
++
++  const TenantEditPage({
++    super.key,
++    required this.tenant,
++  });
++
+   @override
+   State<TenantEditPage> createState() => _TenantEditPageState();
+ }
+@@ -12,6 +19,10 @@
+ class _TenantEditPageState extends State<TenantEditPage> {
+   final formKey = GlobalKey<FormState>();
+   final fields = <String, TextEditingController>{};
++  final TenantService tenantService = TenantService();
++
++  bool saving = false;
++
+   final labels = const {
+     'name': 'Họ và tên',
+     'birthday': 'Ngày sinh',
+@@ -22,41 +33,94 @@
+     'job': 'Nghề nghiệp',
+     'note': 'Ghi chú',
+   };
++
+   String gender = 'Nam';
+   String residence = 'Chưa đăng ký';
++
+   @override
+   void initState() {
+     super.initState();
++
+     for (final key in labels.keys) {
+-      fields[key] = TextEditingController(text: widget.tenant[key] ?? '');
++      fields[key] = TextEditingController(
++        text: widget.tenant[key] ?? '',
++      );
+     }
++
+     gender = widget.tenant['gender'] ?? 'Nam';
+     residence = widget.tenant['residence'] ?? 'Chưa đăng ký';
+   }
+ 
+   @override
+   void dispose() {
+-    for (final c in fields.values) {
+-      c.dispose();
++    for (final controller in fields.values) {
++      controller.dispose();
+     }
+     super.dispose();
+   }
+ 
+-  void _save() {
++  Future<void> _save() async {
++    if (saving) return;
+     if (!formKey.currentState!.validate()) return;
++
++    final id = widget.tenant['id'];
++
++    if (id == null || id.isEmpty) {
++      ScaffoldMessenger.of(context).showSnackBar(
++        const SnackBar(
++          content: Text(
++            'Không tìm thấy ID người thuê trên Firebase. '
++            'Không thể cập nhật bản ghi.',
++          ),
++        ),
++      );
++      return;
++    }
++
+     final result = Map<String, String>.from(widget.tenant);
++
+     for (final key in fields.keys) {
+       result[key] = fields[key]!.text.trim();
+     }
++
+     result['gender'] = gender;
+     result['residence'] = residence;
+-    Navigator.pop(context, result);
++
++    final name = result['name']!.trim();
++    result['initial'] =
++        name.isEmpty ? '' : name.substring(0, 1).toUpperCase();
++
++    setState(() => saving = true);
++
++    try {
++      await tenantService.updateTenant(id, result);
++
++      if (!mounted) return;
++
++      // Trả kết quả về màn hình chi tiết sau khi Firebase lưu thành công.
++      Navigator.pop(context, result);
++    } catch (e) {
++      if (!mounted) return;
++
++      ScaffoldMessenger.of(context).showSnackBar(
++        SnackBar(
++          content: Text('Không lưu được người thuê: $e'),
++          duration: const Duration(seconds: 5),
++        ),
++      );
++    } finally {
++      if (mounted) {
++        setState(() => saving = false);
++      }
++    }
+   }
+ 
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+-      appBar: AppBar(title: const Text('Chỉnh sửa người thuê')),
++      appBar: AppBar(
++        title: const Text('Chỉnh sửa người thuê'),
++      ),
+       body: Form(
+         key: formKey,
+         child: ListView(
+@@ -68,28 +132,68 @@
+                 fields[key]!,
+                 requiredField: key == 'name' || key == 'phone',
+               ),
++
+             DropdownButtonFormField<String>(
+               value: gender,
+-              decoration: const InputDecoration(labelText: 'Giới tính'),
+-              items: [
+-                'Nam',
+-                'Nữ',
+-                'Khác',
+-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+-              onChanged: (v) => setState(() => gender = v!),
++              decoration: const InputDecoration(
++                labelText: 'Giới tính',
++              ),
++              items: ['Nam', 'Nữ', 'Khác']
++                  .map(
++                    (value) => DropdownMenuItem(
++                      value: value,
++                      child: Text(value),
++                    ),
++                  )
++                  .toList(),
++              onChanged: saving
++                  ? null
++                  : (value) {
++                      if (value != null) {
++                        setState(() => gender = value);
++                      }
++                    },
+             ),
++
+             const SizedBox(height: 16),
++
+             DropdownButtonFormField<String>(
+               value: residence,
+-              decoration: const InputDecoration(labelText: 'Tạm trú'),
+-              items: [
+-                'Chưa đăng ký',
+-                'Đã đăng ký',
+-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+-              onChanged: (v) => setState(() => residence = v!),
++              decoration: const InputDecoration(
++                labelText: 'Tạm trú',
++              ),
++              items: ['Chưa đăng ký', 'Đã đăng ký']
++                  .map(
++                    (value) => DropdownMenuItem(
++                      value: value,
++                      child: Text(value),
++                    ),
++                  )
++                  .toList(),
++              onChanged: saving
++                  ? null
++                  : (value) {
++                      if (value != null) {
++                        setState(() => residence = value);
++                      }
++                    },
+             ),
++
+             const SizedBox(height: 24),
+-            FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),
++
++            FilledButton(
++              onPressed: saving ? null : _save,
++              child: saving
++                  ? const SizedBox(
++                      width: 22,
++                      height: 22,
++                      child: CircularProgressIndicator(
++                        strokeWidth: 2,
++                        color: Colors.white,
++                      ),
++                    )
++                  : const Text('Lưu thay đổi'),
++            ),
+           ],
+         ),
+       ),
+Index: lib/screens/tenant_detail_page.dart
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import 'package:flutter/material.dart';\r\n\r\nimport '../data/mock_data.dart';\r\nimport '../widgets/form_widgets.dart';\r\nimport 'room_page.dart';\r\nimport 'tenant_edit_page.dart';\r\nimport 'contract_detail_page.dart';\r\n\r\nclass TenantDetailPage extends StatefulWidget {\r\n  final Map<String, String> tenant;\r\n  final bool full;\r\n  const TenantDetailPage({super.key, required this.tenant, this.full = false});\r\n  @override\r\n  State<TenantDetailPage> createState() => _TenantDetailPageState();\r\n}\r\n\r\nclass _TenantDetailPageState extends State<TenantDetailPage> {\r\n  Future<void> _edit() async {\r\n    final result = await Navigator.push<Map<String, String>>(\r\n      context,\r\n      MaterialPageRoute(builder: (_) => TenantEditPage(tenant: widget.tenant)),\r\n    );\r\n    if (!mounted || result == null) return;\r\n    setState(() => widget.tenant.addAll(result));\r\n  }\r\n\r\n  void _contract() {\r\n    final matches = contractList\r\n        .where((c) => c['name'] == widget.tenant['name'])\r\n        .toList();\r\n    if (matches.isEmpty) {\r\n      ScaffoldMessenger.of(context).showSnackBar(\r\n        const SnackBar(content: Text('Người thuê này chưa có hợp đồng mẫu')),\r\n      );\r\n      return;\r\n    }\r\n    Navigator.push(\r\n      context,\r\n      MaterialPageRoute(\r\n        builder: (_) => ContractDetailPage(contract: matches.first),\r\n      ),\r\n    );\r\n  }\r\n\r\n  @override\r\n  Widget build(BuildContext context) {\r\n    final t = widget.tenant;\r\n    return Scaffold(\r\n      backgroundColor: canvas,\r\n      appBar: AppBar(\r\n        title: Text(\r\n          widget.full ? 'Thông tin chi tiết' : 'Thông tin thuê phòng',\r\n        ),\r\n        actions: [TextButton(onPressed: _edit, child: const Text('Chỉnh sửa'))],\r\n      ),\r\n      body: ListView(\r\n        padding: const EdgeInsets.all(16),\r\n        children: [\r\n          InfoCard(\r\n            title: t['name'] ?? '',\r\n            children: [\r\n              const CircleAvatar(\r\n                radius: 28,\r\n                backgroundColor: blue,\r\n                child: Icon(Icons.person, color: Colors.white, size: 30),\r\n              ),\r\n              const SizedBox(height: 12),\r\n              Text(t['room'] ?? '', textAlign: TextAlign.center),\r\n              Text(\r\n                t['status'] ?? '',\r\n                textAlign: TextAlign.center,\r\n                style: const TextStyle(color: Colors.green),\r\n              ),\r\n              InfoLine('Hợp đồng thuê', t['contract'] ?? ''),\r\n            ],\r\n          ),\r\n          if (widget.full)\r\n            InfoCard(\r\n              title: 'Thông tin khách thuê',\r\n              children: [\r\n                InfoLine('Họ và tên', t['name'] ?? ''),\r\n                InfoLine('Ngày sinh', t['birthday'] ?? ''),\r\n                InfoLine('Giới tính', t['gender'] ?? ''),\r\n                InfoLine('Số điện thoại', t['phone'] ?? ''),\r\n                InfoLine('Email', t['email'] ?? ''),\r\n                InfoLine('Quê quán', t['address'] ?? ''),\r\n                InfoLine('Nghề nghiệp', t['job'] ?? ''),\r\n                InfoLine('Đăng ký tạm trú', t['residence'] ?? ''),\r\n                InfoLine('CCCD/Passport', t['identity'] ?? ''),\r\n                InfoLine('Ghi chú', t['note'] ?? ''),\r\n              ],\r\n            )\r\n          else ...[\r\n            InfoCard(\r\n              title: 'Thông tin liên hệ',\r\n              children: [\r\n                InfoLine('Số điện thoại', t['phone'] ?? ''),\r\n                InfoLine('Email', t['email'] ?? ''),\r\n                InfoLine('CCCD', t['identity'] ?? ''),\r\n                TextButton(\r\n                  onPressed: () async {\r\n                    await Navigator.push(\r\n                      context,\r\n                      MaterialPageRoute(\r\n                        builder: (_) => TenantDetailPage(tenant: t, full: true),\r\n                      ),\r\n                    );\r\n                    if (mounted) setState(() {});\r\n                  },\r\n                  child: const Text('Xem chi tiết →'),\r\n                ),\r\n              ],\r\n            ),\r\n            InfoCard(\r\n              title: 'Thông tin thuê phòng',\r\n              children: [\r\n                InfoLine('Tiền phòng', '${money(t['rent'])} / tháng'),\r\n                InfoLine('Tiền đặt cọc', money(t['deposit'])),\r\n                InfoLine('Ngày bắt đầu', t['start'] ?? ''),\r\n                InfoLine('Ngày kết thúc', t['end'] ?? ''),\r\n                TextButton(\r\n                  onPressed: _contract,\r\n                  child: const Text('Xem hợp đồng →'),\r\n                ),\r\n              ],\r\n            ),\r\n          ],\r\n        ],\r\n      ),\r\n      bottomNavigationBar: const AppBottomBar(selected: 1),\r\n    );\r\n  }\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/lib/screens/tenant_detail_page.dart b/lib/screens/tenant_detail_page.dart
+--- a/lib/screens/tenant_detail_page.dart	(revision fc61e5cf85138665dbfd8275e7549908dc50dd1d)
++++ b/lib/screens/tenant_detail_page.dart	(date 1792205806636)
+@@ -1,3 +1,5 @@
++import 'package:cloud_firestore/cloud_firestore.dart';
++import 'package:firebase_auth/firebase_auth.dart';
+ import 'package:flutter/material.dart';
+ 
+ import '../data/mock_data.dart';
+@@ -9,49 +11,169 @@
+ class TenantDetailPage extends StatefulWidget {
+   final Map<String, String> tenant;
+   final bool full;
+-  const TenantDetailPage({super.key, required this.tenant, this.full = false});
++
++  const TenantDetailPage({
++    super.key,
++    required this.tenant,
++    this.full = false,
++  });
++
+   @override
+   State<TenantDetailPage> createState() => _TenantDetailPageState();
+ }
+ 
+ class _TenantDetailPageState extends State<TenantDetailPage> {
++  late Map<String, String> tenantData;
++
++  @override
++  void initState() {
++    super.initState();
++    tenantData = Map<String, String>.from(widget.tenant);
++  }
++
+   Future<void> _edit() async {
+     final result = await Navigator.push<Map<String, String>>(
+       context,
+-      MaterialPageRoute(builder: (_) => TenantEditPage(tenant: widget.tenant)),
++      MaterialPageRoute(
++        builder: (_) => TenantEditPage(tenant: tenantData),
++      ),
+     );
++
+     if (!mounted || result == null) return;
+-    setState(() => widget.tenant.addAll(result));
+-  }
+ 
+-  void _contract() {
+-    final matches = contractList
+-        .where((c) => c['name'] == widget.tenant['name'])
+-        .toList();
+-    if (matches.isEmpty) {
++    setState(() {
++      tenantData = Map<String, String>.from(result);
++      widget.tenant.addAll(result);
++    });
++
++    ScaffoldMessenger.of(context).showSnackBar(
++      const SnackBar(
++        content: Text('Đã cập nhật thông tin người thuê trên Firebase.'),
++      ),
++    );
++  }
++
++  Future<void> _viewFullDetails() async {
++    final result = await Navigator.push<Map<String, String>>(
++      context,
++      MaterialPageRoute(
++        builder: (_) => TenantDetailPage(
++          tenant: tenantData,
++          full: true,
++        ),
++      ),
++    );
++
++    if (!mounted || result == null) return;
++
++    setState(() {
++      tenantData = Map<String, String>.from(result);
++      widget.tenant.addAll(result);
++    });
++  }
++
++  Future<void> _contract() async {
++  final user = FirebaseAuth.instance.currentUser;
++
++  if (user == null) {
++    ScaffoldMessenger.of(context).showSnackBar(
++      const SnackBar(
++        content: Text('Bạn cần đăng nhập để xem hợp đồng.'),
++      ),
++    );
++    return;
++  }
++
++  try {
++    final snapshot = await FirebaseFirestore.instance
++        .collection('contracts')
++        .where('ownerId', isEqualTo: user.uid)
++        .get();
++
++    if (!mounted) return;
++
++    final tenantId = (tenantData['id'] ?? '').trim();
++    final contractNumber = (tenantData['contract'] ?? '').trim();
++    final tenantName = (tenantData['name'] ?? '').trim();
++    final room = (tenantData['room'] ?? '').trim();
++
++    final docs = snapshot.docs.where((doc) {
++      final data = doc.data();
++
++      // Ưu tiên tìm theo ID người thuê đã liên kết.
++      if (tenantId.isNotEmpty &&
++          (data['tenantId'] ?? '').toString() == tenantId) {
++        return true;
++      }
++
++      // Tìm theo số hợp đồng lưu trong hồ sơ người thuê.
++      if (contractNumber.isNotEmpty &&
++          (data['id'] ?? '').toString() == contractNumber) {
++        return true;
++      }
++
++      // Dự phòng cho hợp đồng cũ chưa có tenantId.
++      return tenantName.isNotEmpty &&
++          (data['name'] ?? '').toString().trim() == tenantName &&
++          (data['room'] ?? '').toString().trim() == room;
++    }).toList();
++
++    if (docs.isEmpty) {
+       ScaffoldMessenger.of(context).showSnackBar(
+-        const SnackBar(content: Text('Người thuê này chưa có hợp đồng mẫu')),
++        const SnackBar(
++          content: Text(
++            'Không tìm thấy hợp đồng của người thuê này trên Firebase.',
++          ),
++        ),
+       );
+       return;
+     }
+-    Navigator.push(
++
++    final doc = docs.first;
++    final data = doc.data();
++
++    final contract = <String, String>{
++      for (final entry in data.entries)
++        entry.key: entry.value == null
++            ? ''
++            : entry.value.toString(),
++      'documentId': doc.id,
++    };
++
++    await Navigator.push(
+       context,
+       MaterialPageRoute(
+-        builder: (_) => ContractDetailPage(contract: matches.first),
++        builder: (_) => ContractDetailPage(contract: contract),
++      ),
++    );
++  } catch (e) {
++    if (!mounted) return;
++
++    ScaffoldMessenger.of(context).showSnackBar(
++      SnackBar(
++        content: Text('Lỗi khi tải hợp đồng từ Firebase: $e'),
++        duration: const Duration(seconds: 5),
+       ),
+     );
+   }
++}
+ 
+   @override
+   Widget build(BuildContext context) {
+-    final t = widget.tenant;
++    final t = tenantData;
++
+     return Scaffold(
+       backgroundColor: canvas,
+       appBar: AppBar(
+         title: Text(
+           widget.full ? 'Thông tin chi tiết' : 'Thông tin thuê phòng',
+         ),
+-        actions: [TextButton(onPressed: _edit, child: const Text('Chỉnh sửa'))],
++        actions: [
++          TextButton(
++            onPressed: _edit,
++            child: const Text('Chỉnh sửa'),
++          ),
++        ],
+       ),
+       body: ListView(
+         padding: const EdgeInsets.all(16),
+@@ -62,10 +184,17 @@
+               const CircleAvatar(
+                 radius: 28,
+                 backgroundColor: blue,
+-                child: Icon(Icons.person, color: Colors.white, size: 30),
++                child: Icon(
++                  Icons.person,
++                  color: Colors.white,
++                  size: 30,
++                ),
+               ),
+               const SizedBox(height: 12),
+-              Text(t['room'] ?? '', textAlign: TextAlign.center),
++              Text(
++                t['room'] ?? '',
++                textAlign: TextAlign.center,
++              ),
+               Text(
+                 t['status'] ?? '',
+                 textAlign: TextAlign.center,
+@@ -98,15 +227,7 @@
+                 InfoLine('Email', t['email'] ?? ''),
+                 InfoLine('CCCD', t['identity'] ?? ''),
+                 TextButton(
+-                  onPressed: () async {
+-                    await Navigator.push(
+-                      context,
+-                      MaterialPageRoute(
+-                        builder: (_) => TenantDetailPage(tenant: t, full: true),
+-                      ),
+-                    );
+-                    if (mounted) setState(() {});
+-                  },
++                  onPressed: _viewFullDetails,
+                   child: const Text('Xem chi tiết →'),
+                 ),
+               ],
+@@ -114,8 +235,14 @@
+             InfoCard(
+               title: 'Thông tin thuê phòng',
+               children: [
+-                InfoLine('Tiền phòng', '${money(t['rent'])} / tháng'),
+-                InfoLine('Tiền đặt cọc', money(t['deposit'])),
++                InfoLine(
++                  'Tiền phòng',
++                  '${money(t['rent'])} / tháng',
++                ),
++                InfoLine(
++                  'Tiền đặt cọc',
++                  money(t['deposit']),
++                ),
+                 InfoLine('Ngày bắt đầu', t['start'] ?? ''),
+                 InfoLine('Ngày kết thúc', t['end'] ?? ''),
+                 TextButton(
+Index: lib/screens/tenant_list_page.dart
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import 'package:flutter/material.dart';\r\n\r\nimport 'room_page.dart';\r\nimport 'tenant_detail_page.dart';\r\nimport '../data/mock_data.dart';\r\n\r\nclass TenantListPage extends StatefulWidget {\r\n  const TenantListPage({super.key});\r\n\r\n  @override\r\n  State<TenantListPage> createState() => _TenantListPageState();\r\n}\r\n\r\nclass _TenantListPageState extends State<TenantListPage> {\r\n  int selectedFilter = 0;\r\n  String searchText = \"\";\r\n\r\n  final tenants = tenantList;\r\n\r\n  List<Map<String, String>> get _shown {\r\n    const statuses = ['Tất cả', 'Trưởng phòng', 'Thành viên'];\r\n    final q = searchText.trim().toLowerCase();\r\n    return tenants.where((t) {\r\n      final match =\r\n          selectedFilter == 0 || t['memberRole'] == statuses[selectedFilter];\r\n      return match &&\r\n          [\r\n            'name',\r\n            'room',\r\n            'phone',\r\n          ].any((key) => (t[key] ?? '').toLowerCase().contains(q));\r\n    }).toList();\r\n  }\r\n\r\n  Future<void> _detail(String name) async {\r\n    final tenant = tenants.firstWhere((t) => t['name'] == name);\r\n    await Navigator.push(\r\n      context,\r\n      MaterialPageRoute(builder: (_) => TenantDetailPage(tenant: tenant)),\r\n    );\r\n    if (mounted) setState(() {});\r\n  }\r\n\r\n  void _search() => FocusScope.of(context).unfocus();\r\n\r\n  @override\r\n  Widget build(BuildContext context) {\r\n    return Scaffold(\r\n      backgroundColor: const Color(0xFFF7F8FC),\r\n\r\n      body: SafeArea(\r\n        child: Column(\r\n          children: [\r\n            Expanded(\r\n              child: SingleChildScrollView(\r\n                padding: const EdgeInsets.fromLTRB(18, 18, 18, 25),\r\n                child: Column(\r\n                  crossAxisAlignment: CrossAxisAlignment.start,\r\n                  children: [\r\n                    Row(\r\n                      children: [\r\n                        const Expanded(\r\n                          child: Text(\r\n                            \"Danh sách người thuê\",\r\n                            style: TextStyle(\r\n                              fontSize: 24,\r\n                              fontWeight: FontWeight.bold,\r\n                              color: Color(0xFF202533),\r\n                            ),\r\n                          ),\r\n                        ),\r\n\r\n                        IconButton(\r\n                          onPressed: _search,\r\n                          icon: const Icon(\r\n                            Icons.search,\r\n                            color: Color(0xFF707582),\r\n                          ),\r\n                        ),\r\n                      ],\r\n                    ),\r\n\r\n                    const SizedBox(height: 20),\r\n\r\n                    TextField(\r\n                      onChanged: (value) {\r\n                        setState(() {\r\n                          searchText = value;\r\n                        });\r\n                      },\r\n                      decoration: InputDecoration(\r\n                        hintText: \"Tìm kiếm tên, số phòng...\",\r\n                        hintStyle: const TextStyle(\r\n                          fontSize: 12,\r\n                          color: Colors.grey,\r\n                        ),\r\n                        prefixIcon: const Icon(\r\n                          Icons.search,\r\n                          size: 19,\r\n                          color: Colors.grey,\r\n                        ),\r\n                        filled: true,\r\n                        fillColor: Colors.white,\r\n                        contentPadding: const EdgeInsets.symmetric(\r\n                          vertical: 16,\r\n                        ),\r\n                        enabledBorder: OutlineInputBorder(\r\n                          borderRadius: BorderRadius.circular(14),\r\n                          borderSide: const BorderSide(\r\n                            color: Color(0xFFE4E5E9),\r\n                          ),\r\n                        ),\r\n                        focusedBorder: OutlineInputBorder(\r\n                          borderRadius: BorderRadius.circular(14),\r\n                          borderSide: const BorderSide(\r\n                            color: Color(0xFF2F67EA),\r\n                            width: 1.4,\r\n                          ),\r\n                        ),\r\n                      ),\r\n                    ),\r\n\r\n                    const SizedBox(height: 15),\r\n\r\n                    Wrap(\r\n                      spacing: 8,\r\n                      children: List.generate(\r\n                        3,\r\n                        (i) => _filterButton(\r\n                          index: i,\r\n                          text: ['Tất cả', 'Trưởng phòng', 'Thành viên'][i],\r\n                          selectedColor: blue,\r\n                        ),\r\n                      ),\r\n                    ),\r\n\r\n                    const SizedBox(height: 18),\r\n\r\n                    ..._shown.map(\r\n                      (tenant) => Padding(\r\n                        padding: const EdgeInsets.only(bottom: 11),\r\n                        child: _tenantCard(\r\n                          initial: tenant[\"initial\"]!,\r\n                          name: tenant[\"name\"]!,\r\n                          room: tenant[\"room\"]!,\r\n                          phone: tenant[\"phone\"]!,\r\n                          contract: tenant[\"contract\"]!,\r\n                          status: tenant[\"status\"]!,\r\n                        ),\r\n                      ),\r\n                    ),\r\n\r\n                    const SizedBox(height: 3),\r\n\r\n                    Text(\r\n                      \"${_shown.length} người thuê\",\r\n                      style: const TextStyle(fontSize: 11, color: Colors.grey),\r\n                    ),\r\n                  ],\r\n                ),\r\n              ),\r\n            ),\r\n          ],\r\n        ),\r\n      ),\r\n\r\n      bottomNavigationBar: const AppBottomBar(selected: 1),\r\n    );\r\n  }\r\n\r\n  Widget _filterButton({\r\n    required int index,\r\n    required String text,\r\n    required Color selectedColor,\r\n  }) {\r\n    final bool isSelected = selectedFilter == index;\r\n\r\n    return GestureDetector(\r\n      onTap: () {\r\n        setState(() {\r\n          selectedFilter = index;\r\n        });\r\n      },\r\n      child: Container(\r\n        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),\r\n        decoration: BoxDecoration(\r\n          color: isSelected ? selectedColor : Colors.white,\r\n          borderRadius: BorderRadius.circular(20),\r\n        ),\r\n        child: Text(\r\n          text,\r\n          style: TextStyle(\r\n            fontSize: 11,\r\n            color: isSelected ? Colors.white : const Color(0xFF7E8390),\r\n            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,\r\n          ),\r\n        ),\r\n      ),\r\n    );\r\n  }\r\n\r\n  Widget _tenantCard({\r\n    required String initial,\r\n    required String name,\r\n    required String room,\r\n    required String phone,\r\n    required String contract,\r\n    required String status,\r\n  }) {\r\n    Color statusBackground;\r\n    Color statusText;\r\n\r\n    if (status == \"Đang thuê\") {\r\n      statusBackground = const Color(0xFFE7F8ED);\r\n      statusText = const Color(0xFF16A15D);\r\n    } else if (status == \"Sắp hết hạn\") {\r\n      statusBackground = const Color(0xFFFFF0DE);\r\n      statusText = const Color(0xFFE88623);\r\n    } else {\r\n      statusBackground = const Color(0xFFFFEAEA);\r\n      statusText = const Color(0xFFE74747);\r\n    }\r\n\r\n    return InkWell(\r\n      onTap: () {\r\n        _detail(name);\r\n      },\r\n      borderRadius: BorderRadius.circular(16),\r\n      child: Container(\r\n        width: double.infinity,\r\n        padding: const EdgeInsets.all(13),\r\n        decoration: BoxDecoration(\r\n          color: Colors.white,\r\n          borderRadius: BorderRadius.circular(16),\r\n        ),\r\n\r\n        child: Row(\r\n          crossAxisAlignment: CrossAxisAlignment.start,\r\n          children: [\r\n            Container(\r\n              width: 46,\r\n              height: 46,\r\n              decoration: const BoxDecoration(\r\n                color: Color(0xFFEAF3FF),\r\n                shape: BoxShape.circle,\r\n              ),\r\n              alignment: Alignment.center,\r\n              child: Text(\r\n                initial,\r\n                style: const TextStyle(\r\n                  color: Color(0xFF4390E8),\r\n                  fontSize: 14,\r\n                  fontWeight: FontWeight.bold,\r\n                ),\r\n              ),\r\n            ),\r\n\r\n            const SizedBox(width: 12),\r\n\r\n            Expanded(\r\n              child: Column(\r\n                crossAxisAlignment: CrossAxisAlignment.start,\r\n                children: [\r\n                  Text(\r\n                    name,\r\n                    style: const TextStyle(\r\n                      fontSize: 14,\r\n                      fontWeight: FontWeight.bold,\r\n                      color: Color(0xFF202533),\r\n                    ),\r\n                  ),\r\n\r\n                  const SizedBox(height: 4),\r\n\r\n                  Text(\r\n                    room,\r\n                    style: const TextStyle(fontSize: 11, color: Colors.grey),\r\n                  ),\r\n\r\n                  const SizedBox(height: 8),\r\n\r\n                  Row(\r\n                    children: [\r\n                      const Icon(\r\n                        Icons.phone_outlined,\r\n                        size: 13,\r\n                        color: Colors.grey,\r\n                      ),\r\n\r\n                      const SizedBox(width: 5),\r\n\r\n                      Text(\r\n                        phone,\r\n                        style: const TextStyle(\r\n                          fontSize: 10,\r\n                          color: Colors.grey,\r\n                        ),\r\n                      ),\r\n                    ],\r\n                  ),\r\n\r\n                  const SizedBox(height: 4),\r\n\r\n                  Row(\r\n                    children: [\r\n                      const Icon(\r\n                        Icons.calendar_month_outlined,\r\n                        size: 13,\r\n                        color: Colors.grey,\r\n                      ),\r\n\r\n                      const SizedBox(width: 5),\r\n\r\n                      Expanded(\r\n                        child: Text(\r\n                          contract,\r\n                          style: const TextStyle(\r\n                            fontSize: 10,\r\n                            color: Colors.grey,\r\n                          ),\r\n                        ),\r\n                      ),\r\n                    ],\r\n                  ),\r\n                ],\r\n              ),\r\n            ),\r\n\r\n            const SizedBox(width: 6),\r\n\r\n            Column(\r\n              crossAxisAlignment: CrossAxisAlignment.end,\r\n              children: [\r\n                Container(\r\n                  padding: const EdgeInsets.symmetric(\r\n                    horizontal: 9,\r\n                    vertical: 6,\r\n                  ),\r\n                  decoration: BoxDecoration(\r\n                    color: statusBackground,\r\n                    borderRadius: BorderRadius.circular(20),\r\n                  ),\r\n                  child: Text(\r\n                    status,\r\n                    style: TextStyle(\r\n                      fontSize: 9,\r\n                      fontWeight: FontWeight.w600,\r\n                      color: statusText,\r\n                    ),\r\n                  ),\r\n                ),\r\n\r\n                const SizedBox(height: 34),\r\n\r\n                const Icon(Icons.chevron_right, size: 18, color: Colors.grey),\r\n              ],\r\n            ),\r\n          ],\r\n        ),\r\n      ),\r\n    );\r\n  }\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/lib/screens/tenant_list_page.dart b/lib/screens/tenant_list_page.dart
+--- a/lib/screens/tenant_list_page.dart	(revision fc61e5cf85138665dbfd8275e7549908dc50dd1d)
++++ b/lib/screens/tenant_list_page.dart	(date 1792205806637)
+@@ -1,8 +1,11 @@
++
++import 'dart:async';
++
+ import 'package:flutter/material.dart';
+ 
++import '../services/tenant_service.dart';
+ import 'room_page.dart';
+ import 'tenant_detail_page.dart';
+-import '../data/mock_data.dart';
+ 
+ class TenantListPage extends StatefulWidget {
+   const TenantListPage({super.key});
+@@ -13,41 +16,96 @@
+ 
+ class _TenantListPageState extends State<TenantListPage> {
+   int selectedFilter = 0;
+-  String searchText = "";
++  String searchText = '';
++
++  final TenantService tenantService = TenantService();
+ 
+-  final tenants = tenantList;
++  List<Map<String, String>> tenants = [];
++  bool loading = true;
++  String? loadError;
++
++  StreamSubscription<List<Map<String, String>>>? subscription;
++
++  @override
++  void initState() {
++    super.initState();
++    _loadTenants();
++  }
++
++  void _loadTenants() {
++    subscription?.cancel();
++
++    setState(() {
++      loading = true;
++      loadError = null;
++    });
++
++    subscription = tenantService.watchTenants().listen(
++      (data) {
++        if (!mounted) return;
++
++        setState(() {
++          tenants = data;
++          loading = false;
++          loadError = null;
++        });
++      },
++      onError: (Object error) {
++        if (!mounted) return;
++
++        setState(() {
++          loading = false;
++          loadError = error.toString();
++        });
++      },
++    );
++  }
++
++  @override
++  void dispose() {
++    subscription?.cancel();
++    super.dispose();
++  }
+ 
+   List<Map<String, String>> get _shown {
+     const statuses = ['Tất cả', 'Trưởng phòng', 'Thành viên'];
+     final q = searchText.trim().toLowerCase();
++
+     return tenants.where((t) {
+-      final match =
+-          selectedFilter == 0 || t['memberRole'] == statuses[selectedFilter];
+-      return match &&
+-          [
+-            'name',
+-            'room',
+-            'phone',
+-          ].any((key) => (t[key] ?? '').toLowerCase().contains(q));
++      final matchRole = selectedFilter == 0 ||
++          t['memberRole'] == statuses[selectedFilter];
++
++      final matchSearch = [
++        'name',
++        'room',
++        'phone',
++      ].any((key) => (t[key] ?? '').toLowerCase().contains(q));
++
++      return matchRole && matchSearch;
+     }).toList();
+   }
+ 
+-  Future<void> _detail(String name) async {
+-    final tenant = tenants.firstWhere((t) => t['name'] == name);
++  Future<void> _detail(Map<String, String> tenant) async {
+     await Navigator.push(
+       context,
+-      MaterialPageRoute(builder: (_) => TenantDetailPage(tenant: tenant)),
++      MaterialPageRoute(
++        builder: (_) => TenantDetailPage(tenant: tenant),
++      ),
+     );
+-    if (mounted) setState(() {});
++
++    // Danh sách được cập nhật tự động từ Firestore snapshots.
+   }
+ 
+-  void _search() => FocusScope.of(context).unfocus();
++  void _search() {
++    FocusScope.of(context).unfocus();
++  }
+ 
+   @override
+   Widget build(BuildContext context) {
++    final shown = _shown;
++
+     return Scaffold(
+       backgroundColor: const Color(0xFFF7F8FC),
+-
+       body: SafeArea(
+         child: Column(
+           children: [
+@@ -61,7 +119,7 @@
+                       children: [
+                         const Expanded(
+                           child: Text(
+-                            "Danh sách người thuê",
++                            'Danh sách người thuê',
+                             style: TextStyle(
+                               fontSize: 24,
+                               fontWeight: FontWeight.bold,
+@@ -69,7 +127,6 @@
+                             ),
+                           ),
+                         ),
+-
+                         IconButton(
+                           onPressed: _search,
+                           icon: const Icon(
+@@ -89,7 +146,7 @@
+                         });
+                       },
+                       decoration: InputDecoration(
+-                        hintText: "Tìm kiếm tên, số phòng...",
++                        hintText: 'Tìm kiếm tên, số phòng...',
+                         hintStyle: const TextStyle(
+                           fontSize: 12,
+                           color: Colors.grey,
+@@ -128,7 +185,11 @@
+                         3,
+                         (i) => _filterButton(
+                           index: i,
+-                          text: ['Tất cả', 'Trưởng phòng', 'Thành viên'][i],
++                          text: const [
++                            'Tất cả',
++                            'Trưởng phòng',
++                            'Thành viên',
++                          ][i],
+                           selectedColor: blue,
+                         ),
+                       ),
+@@ -136,26 +197,79 @@
+ 
+                     const SizedBox(height: 18),
+ 
+-                    ..._shown.map(
+-                      (tenant) => Padding(
+-                        padding: const EdgeInsets.only(bottom: 11),
+-                        child: _tenantCard(
+-                          initial: tenant["initial"]!,
+-                          name: tenant["name"]!,
+-                          room: tenant["room"]!,
+-                          phone: tenant["phone"]!,
+-                          contract: tenant["contract"]!,
+-                          status: tenant["status"]!,
+-                        ),
+-                      ),
+-                    ),
++                    if (loading)
++                      const Center(
++                        child: Padding(
++                          padding: EdgeInsets.all(24),
++                          child: CircularProgressIndicator(),
++                        ),
++                      ),
++
++                    if (loadError != null)
++                      Padding(
++                        padding: const EdgeInsets.all(12),
++                        child: Column(
++                          children: [
++                            const Icon(
++                              Icons.error_outline,
++                              color: Colors.red,
++                              size: 32,
++                            ),
++                            const SizedBox(height: 8),
++                            Text(
++                              'Không tải được dữ liệu người thuê:\n$loadError',
++                              textAlign: TextAlign.center,
++                              style: const TextStyle(
++                                fontSize: 12,
++                                color: Colors.red,
++                              ),
++                            ),
++                            const SizedBox(height: 8),
++                            OutlinedButton(
++                              onPressed: _loadTenants,
++                              child: const Text('Thử tải lại'),
++                            ),
++                          ],
++                        ),
++                      ),
++
++                    if (!loading && loadError == null && shown.isEmpty)
++                      const Padding(
++                        padding: EdgeInsets.all(24),
++                        child: Center(
++                          child: Text(
++                            'Chưa có người thuê phù hợp',
++                            style: TextStyle(color: Colors.grey),
++                          ),
++                        ),
++                      ),
++
++                    if (!loading && loadError == null)
++                      ...shown.map(
++                        (tenant) => Padding(
++                          padding: const EdgeInsets.only(bottom: 11),
++                          child: _tenantCard(
++                            tenant: tenant,
++                            initial: tenant['initial'] ?? '',
++                            name: tenant['name'] ?? '',
++                            room: tenant['room'] ?? '',
++                            phone: tenant['phone'] ?? '',
++                            contract: tenant['contract'] ?? '',
++                            status: tenant['status'] ?? 'Chưa có hợp đồng',
++                          ),
++                        ),
++                      ),
+ 
+                     const SizedBox(height: 3),
+ 
+-                    Text(
+-                      "${_shown.length} người thuê",
+-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+-                    ),
++                    if (!loading && loadError == null)
++                      Text(
++                        '${shown.length} người thuê',
++                        style: const TextStyle(
++                          fontSize: 11,
++                          color: Colors.grey,
++                        ),
++                      ),
+                   ],
+                 ),
+               ),
+@@ -163,7 +277,6 @@
+           ],
+         ),
+       ),
+-
+       bottomNavigationBar: const AppBottomBar(selected: 1),
+     );
+   }
+@@ -182,7 +295,10 @@
+         });
+       },
+       child: Container(
+-        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
++        padding: const EdgeInsets.symmetric(
++          horizontal: 15,
++          vertical: 8,
++        ),
+         decoration: BoxDecoration(
+           color: isSelected ? selectedColor : Colors.white,
+           borderRadius: BorderRadius.circular(20),
+@@ -191,8 +307,11 @@
+           text,
+           style: TextStyle(
+             fontSize: 11,
+-            color: isSelected ? Colors.white : const Color(0xFF7E8390),
+-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
++            color: isSelected
++                ? Colors.white
++                : const Color(0xFF7E8390),
++            fontWeight:
++                isSelected ? FontWeight.w600 : FontWeight.normal,
+           ),
+         ),
+       ),
+@@ -200,6 +319,7 @@
+   }
+ 
+   Widget _tenantCard({
++    required Map<String, String> tenant,
+     required String initial,
+     required String name,
+     required String room,
+@@ -210,10 +330,10 @@
+     Color statusBackground;
+     Color statusText;
+ 
+-    if (status == "Đang thuê") {
++    if (status == 'Đang thuê') {
+       statusBackground = const Color(0xFFE7F8ED);
+       statusText = const Color(0xFF16A15D);
+-    } else if (status == "Sắp hết hạn") {
++    } else if (status == 'Sắp hết hạn') {
+       statusBackground = const Color(0xFFFFF0DE);
+       statusText = const Color(0xFFE88623);
+     } else {
+@@ -222,9 +342,7 @@
+     }
+ 
+     return InkWell(
+-      onTap: () {
+-        _detail(name);
+-      },
++      onTap: () => _detail(tenant),
+       borderRadius: BorderRadius.circular(16),
+       child: Container(
+         width: double.infinity,
+@@ -233,7 +351,6 @@
+           color: Colors.white,
+           borderRadius: BorderRadius.circular(16),
+         ),
+-
+         child: Row(
+           crossAxisAlignment: CrossAxisAlignment.start,
+           children: [
+@@ -269,16 +386,15 @@
+                       color: Color(0xFF202533),
+                     ),
+                   ),
+-
+                   const SizedBox(height: 4),
+-
+                   Text(
+                     room,
+-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
++                    style: const TextStyle(
++                      fontSize: 11,
++                      color: Colors.grey,
++                    ),
+                   ),
+-
+                   const SizedBox(height: 8),
+-
+                   Row(
+                     children: [
+                       const Icon(
+@@ -286,21 +402,19 @@
+                         size: 13,
+                         color: Colors.grey,
+                       ),
+-
+                       const SizedBox(width: 5),
+-
+-                      Text(
+-                        phone,
+-                        style: const TextStyle(
+-                          fontSize: 10,
+-                          color: Colors.grey,
++                      Expanded(
++                        child: Text(
++                          phone,
++                          style: const TextStyle(
++                            fontSize: 10,
++                            color: Colors.grey,
++                          ),
+                         ),
+                       ),
+                     ],
+                   ),
+-
+                   const SizedBox(height: 4),
+-
+                   Row(
+                     children: [
+                       const Icon(
+@@ -308,9 +422,7 @@
+                         size: 13,
+                         color: Colors.grey,
+                       ),
+-
+                       const SizedBox(width: 5),
+-
+                       Expanded(
+                         child: Text(
+                           contract,
+@@ -349,10 +461,12 @@
+                     ),
+                   ),
+                 ),
+-
+                 const SizedBox(height: 34),
+-
+-                const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
++                const Icon(
++                  Icons.chevron_right,
++                  size: 18,
++                  color: Colors.grey,
++                ),
+               ],
+             ),
+           ],
