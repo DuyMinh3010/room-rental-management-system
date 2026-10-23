@@ -1,0 +1,190 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function manager() {
+      return signedIn();
+    }
+
+    match /managers/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /rooms/{id} {
+      allow read: if manager();
+      allow create, update: if manager()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.condition in ['Tốt', 'Đang sửa']
+        && request.resource.data.price is number
+        && request.resource.data.price > 0
+        && request.resource.data.deposit is number
+        && request.resource.data.deposit >= 0
+        && request.resource.data.capacity is number
+        && request.resource.data.capacity >= 1
+        && request.resource.data.serviceIds is list
+        && request.resource.data.serviceIds.size() <= 30;
+    }
+
+    match /tenants/{id} {
+      allow read, create, update: if manager();
+    }
+
+    match /services/{id} {
+      allow read: if manager();
+      allow create, update: if manager()
+        && request.resource.data.mode in ['meter', 'room', 'person']
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0;
+    }
+
+    match /meters/{id} {
+      allow read: if manager();
+      allow create, update: if manager()
+        && request.resource.data.previous is number
+        && request.resource.data.previous >= 0
+        && request.resource.data.current is number
+        && request.resource.data.current >= request.resource.data.previous;
+    }
+
+    match /contracts/{id} {
+      allow read: if manager();
+      allow create, update: if manager()
+        && request.resource.data.rent is number
+        && request.resource.data.rent > 0
+        && request.resource.data.deposit is number
+        && request.resource.data.deposit >= 0;
+    }
+
+    match /extras/{id} {
+      allow read, delete: if manager();
+      allow create, update: if manager()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0;
+    }
+
+    match /maintenance/{id} {
+      allow read, create, update: if manager();
+    }
+
+    match /settings/{id} {
+      allow read, create, update: if manager();
+    }
+
+    match /system/revision {
+      allow read, create, update: if manager();
+    }
+
+    match /invoices/{id} {
+      allow read: if manager()
+        || (signedIn() && resource.data.recipientUid == request.auth.uid);
+
+      allow create: if manager()
+        && request.resource.data.status == 'unpaid'
+        && request.resource.data.total is number
+        && request.resource.data.total > 0
+        && request.resource.data.lines is list
+        && request.resource.data.lines.size() > 0;
+
+      allow update: if (
+        manager()
+        && request.resource.data.status in ['unpaid', 'reported', 'paid', 'void']
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'total',
+          'lines',
+          'rent',
+          'contractId',
+          'period',
+          'meterPeriod',
+          'roomId',
+          'tenantId',
+          'dueDate',
+          'issueDate'
+        ])
+      ) || (
+        signedIn()
+        && resource.data.recipientUid == request.auth.uid
+        && resource.data.status == 'unpaid'
+        && request.resource.data.status == 'reported'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'reportedAt',
+          'paymentNote',
+          'updatedAt'
+        ])
+        && request.resource.data.reportedAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.paymentNote is string
+        && request.resource.data.paymentNote.size() <= 4000
+      );
+    }
+
+    match /notifications/{id} {
+      function ownPaymentReport() {
+        let n = request.resource.data;
+        let before = get(
+          /databases/$(database)/documents/invoices/$(n.invoiceId)
+        ).data;
+        let after = getAfter(
+          /databases/$(database)/documents/invoices/$(n.invoiceId)
+        ).data;
+
+        return signedIn()
+          && n.keys().hasOnly([
+            'title',
+            'body',
+            'audience',
+            'invoiceId',
+            'createdAt',
+            'delivery'
+          ])
+          && id == 'reported_' + n.invoiceId
+          && n.audience == 'managers'
+          && n.title == 'Người thuê báo đã chuyển tiền'
+          && n.body is string
+          && n.body.size() <= 4000
+          && n.delivery == 'in_app'
+          && n.createdAt == request.time
+          && before.recipientUid == request.auth.uid
+          && before.status == 'unpaid'
+          && after.recipientUid == request.auth.uid
+          && after.status == 'reported';
+      }
+
+      allow read: if (
+        manager() && resource.data.audience == 'managers'
+      ) || (
+        signedIn() && resource.data.get('recipientUid', '') == request.auth.uid
+      );
+
+      allow create: if (
+        manager()
+        && request.resource.data.audience in ['managers', 'tenant']
+        && request.resource.data.title is string
+        && request.resource.data.body is string
+        && request.resource.data.createdAt == request.time
+      ) || ownPaymentReport();
+
+      allow update: if manager()
+        && request.resource.data.audience in ['managers', 'tenant']
+        && request.resource.data.title is string
+        && request.resource.data.body is string
+        && request.resource.data.createdAt == request.time;
+    }
+
+    match /users/{uid}/reads/{noticeId} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['readAt'])
+        && request.resource.data.readAt == request.time;
+    }
+  }
+}

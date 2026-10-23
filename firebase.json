@@ -1,0 +1,24 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "quan-li-phong",
+          "appId": "1:744238998639:android:a99dfa7f656253ba46d99a",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "quan-li-phong",
+          "configurations": {
+            "android": "1:744238998639:android:a99dfa7f656253ba46d99a"
+          }
+        }
+      }
+    }
+  }
+}
