@@ -2,9 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
-import 'room_page.dart';
-
 class VerifyPage extends StatefulWidget {
   final Map<String, String> account;
   const VerifyPage({super.key, required this.account});
@@ -48,11 +45,26 @@ class _VerifyPageState extends State<VerifyPage> {
       ).showSnackBar(const SnackBar(content: Text('Mã thử nghiệm là 123456')));
       return;
     }
-    profile.addAll(widget.account);
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const RoomPage()),
-      (_) => false,
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Đăng ký chưa hoàn tất'),
+        content: const Text(
+          'Mã này chỉ dùng để thử giao diện; ứng dụng chưa tạo tài khoản '
+          'Firebase. Hãy quay lại và đăng nhập bằng tài khoản đã có trong '
+          'Firebase Authentication.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            },
+            child: const Text('Về đăng nhập'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -64,7 +76,11 @@ class _VerifyPageState extends State<VerifyPage> {
         padding: const EdgeInsets.all(24),
         children: [
           const SizedBox(height: 40),
-          const Icon(Icons.mark_email_read_outlined, size: 64, color: blue),
+          const Icon(
+            Icons.mark_email_read_outlined,
+            size: 64,
+            color: Color(0xFF2463F5),
+          ),
           const SizedBox(height: 24),
           Text(
             'Nhập mã xác thực cho ${widget.account['phone'] ?? widget.account['email']}',

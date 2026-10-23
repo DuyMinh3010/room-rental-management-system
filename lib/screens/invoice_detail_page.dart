@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../utils/formatters.dart';
 import '../widgets/form_widgets.dart';
 import '../widgets/payment_qr_preview.dart';
 import 'room_page.dart';

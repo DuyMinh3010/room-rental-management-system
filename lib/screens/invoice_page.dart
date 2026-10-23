@@ -4,7 +4,7 @@ import 'room_page.dart';
 import 'service_page.dart';
 import 'invoice_create_page.dart';
 import 'invoice_detail_page.dart';
-import '../data/mock_data.dart';
+import '../utils/formatters.dart';
 
 class InvoicePage extends StatefulWidget {
   const InvoicePage({super.key});
@@ -14,7 +14,7 @@ class InvoicePage extends StatefulWidget {
 }
 
 class _InvoicePageState extends State<InvoicePage> {
-  final invoices = invoiceList;
+  final invoices = <Map<String, String>>[];
 
   Future<void> _create() async {
     final result = await Navigator.push<Map<String, String>>(
@@ -152,6 +152,12 @@ class _InvoicePageState extends State<InvoicePage> {
               ),
 
               const SizedBox(height: 13),
+
+              if (invoices.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: Text('Chưa có hóa đơn')),
+                ),
 
               ...invoices.map(
                 (invoice) => Padding(

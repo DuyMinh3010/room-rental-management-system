@@ -1,8 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+
 import '../widgets/form_widgets.dart';
 import 'room_page.dart';
 import 'tenant_edit_page.dart';
 import 'contract_detail_page.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class TenantDetailPage extends StatefulWidget {
@@ -23,11 +27,9 @@ class _TenantDetailPageState extends State<TenantDetailPage> {
     setState(() => widget.tenant.addAll(result));
   }
 
-
   Future<void> _contract() async {
     try {
-      final contracts =
-      FirebaseFirestore.instance.collection('contracts');
+      final contracts = FirebaseFirestore.instance.collection('contracts');
 
       final contractId = (widget.tenant['contract'] ?? '').trim();
       final tenantName = (widget.tenant['name'] ?? '').trim();
@@ -46,9 +48,7 @@ class _TenantDetailPageState extends State<TenantDetailPage> {
 
       // Nếu chưa tìm thấy theo mã, tìm theo tên người thuê.
       if (result.docs.isEmpty && tenantName.isNotEmpty) {
-        result = await contracts
-            .where('name', isEqualTo: tenantName)
-            .get();
+        result = await contracts.where('name', isEqualTo: tenantName).get();
       }
 
       if (!mounted) return;
@@ -72,17 +72,26 @@ class _TenantDetailPageState extends State<TenantDetailPage> {
         return (data['room'] ?? '').toString().trim() == tenantRoom;
       }).toList();
 
-      final selectedDoc =
-      matchingDocs.isNotEmpty ? matchingDocs.first : result.docs.first;
+      final selectedDoc = matchingDocs.isNotEmpty
+          ? matchingDocs.first
+          : result.docs.first;
 
       final data = selectedDoc.data();
 
       final contract = data.map<String, String>(
-            (key, value) => MapEntry(key, value?.toString() ?? ''),
+        (key, value) => MapEntry(
+          key,
+          value == null
+              ? ''
+              : value is List || value is Map
+              ? jsonEncode(value)
+              : value.toString(),
+        ),
       );
 
       // Đảm bảo mã hợp đồng được lấy từ dữ liệu Firebase.
       contract['id'] = (data['id'] ?? '').toString();
+      contract['documentId'] = selectedDoc.id;
 
       await Navigator.push(
         context,
@@ -93,13 +102,11 @@ class _TenantDetailPageState extends State<TenantDetailPage> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Không thể tải hợp đồng: $e'),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Không thể tải hợp đồng: $e')));
     }
   }
+
   String money(String? value) {
     if (value == null || value.trim().isEmpty) return '0 đ';
 
@@ -118,6 +125,7 @@ class _TenantDetailPageState extends State<TenantDetailPage> {
 
     return '${buffer.toString()} đ';
   }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tenant;
@@ -147,7 +155,10 @@ class _TenantDetailPageState extends State<TenantDetailPage> {
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.green),
               ),
-              InfoLine('Hợp đồng thuê', t['contract'] ?? ''),
+              InfoLine(
+                'Hợp đồng thuê',
+                t['contractPeriod'] ?? t['contract'] ?? '',
+              ),
             ],
           ),
           if (widget.full)

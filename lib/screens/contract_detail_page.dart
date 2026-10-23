@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../utils/formatters.dart';
 import '../widgets/form_widgets.dart';
 import 'room_page.dart';
 import 'contract_edit_page.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ContractDetailPage extends StatefulWidget {
@@ -14,34 +17,55 @@ class ContractDetailPage extends StatefulWidget {
 }
 
 class _ContractDetailPageState extends State<ContractDetailPage> {
+  Future<void> _saveContractToFirebase({
+    required Map<String, dynamic> updates,
+  }) async {
+    final contracts = FirebaseFirestore.instance.collection('contracts');
+    final documentId = (widget.contract['documentId'] ?? '').trim();
+    final id = (widget.contract['id'] ?? '').trim();
 
-  Future<void> _saveContractToFirebase({String? lookupId}) async {
-    final id = (lookupId ?? widget.contract['id'] ?? '').trim();
+    DocumentReference<Map<String, dynamic>> contractRef;
+    if (documentId.isNotEmpty) {
+      contractRef = contracts.doc(documentId);
+    } else {
+      if (id.isEmpty) {
+        throw Exception('Không tìm thấy mã hợp đồng');
+      }
 
-    if (id.isEmpty) {
-      throw Exception('Không tìm thấy mã hợp đồng');
+      final result = await contracts.where('id', isEqualTo: id).limit(1).get();
+
+      if (result.docs.isEmpty) {
+        throw Exception('Không tìm thấy hợp đồng trên Firebase');
+      }
+      contractRef = result.docs.first.reference;
+      widget.contract['documentId'] = contractRef.id;
     }
 
-    final result = await FirebaseFirestore.instance
-        .collection('contracts')
-        .where('id', isEqualTo: id)
-        .limit(1)
-        .get();
-
-    if (result.docs.isEmpty) {
+    final snapshot = await contractRef.get();
+    final data = snapshot.data();
+    if (data == null) {
       throw Exception('Không tìm thấy hợp đồng trên Firebase');
     }
 
-    await result.docs.first.reference.update({
-      ...widget.contract,
+    num parseAmount(dynamic value, String field) {
+      if (value is num) return value;
+      final digits = value.toString().replaceAll(RegExp(r'[^0-9-]'), '');
+      final parsed = num.tryParse(digits);
+      if (parsed == null) {
+        throw Exception('Dữ liệu $field của hợp đồng không hợp lệ');
+      }
+      return parsed;
+    }
+
+    await contractRef.update({
+      ...updates,
+      'rent': parseAmount(data['rent'], 'tiền thuê'),
+      'deposit': parseAmount(data['deposit'], 'tiền cọc'),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-
   Future<void> _edit() async {
-    final oldId = widget.contract['id'];
-
     final result = await Navigator.push<Map<String, String>>(
       context,
       MaterialPageRoute(
@@ -51,43 +75,34 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
 
     if (result == null || !mounted) return;
 
-    final oldData = Map<String, String>.from(widget.contract);
-
-    try {
-      widget.contract.addAll(result);
-
-      await _saveContractToFirebase(lookupId: oldId);
-
-      if (!mounted) return;
-      setState(() {});
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã cập nhật hợp đồng lên Firebase')),
-      );
-    } catch (e) {
-      widget.contract
-        ..clear()
-        ..addAll(oldData);
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi cập nhật hợp đồng: $e')),
-      );
-    }
+    // ContractEditPage persists the contract and tenant before returning.
+    // Do not write the display strings back to Firestore here.
+    widget.contract.addAll(result);
+    setState(() {});
   }
 
+  List<Map<String, dynamic>> _members() {
+    final value = widget.contract['members'];
+    if (value == null || value.isEmpty) return [];
 
+    final decoded = jsonDecode(value);
+    if (decoded is! List) return [];
+
+    return decoded
+        .whereType<Map>()
+        .map((member) => Map<String, dynamic>.from(member))
+        .toList();
+  }
 
   Future<void> _renew() async {
     final parts = (widget.contract['end'] ?? '').split('/');
 
     final oldEnd = parts.length == 3
         ? DateTime(
-      int.parse(parts[2]),
-      int.parse(parts[1]),
-      int.parse(parts[0]),
-    )
+            int.parse(parts[2]),
+            int.parse(parts[1]),
+            int.parse(parts[0]),
+          )
         : DateTime.now();
 
     final date = await showDatePicker(
@@ -103,9 +118,7 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
 
     if (!date.isAfter(oldEnd)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ngày gia hạn phải sau ngày kết thúc cũ'),
-        ),
+        const SnackBar(content: Text('Ngày gia hạn phải sau ngày kết thúc cũ')),
       );
       return;
     }
@@ -114,20 +127,24 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
 
     setState(() {
       widget.contract['end'] =
-      '${date.day.toString().padLeft(2, '0')}/'
+          '${date.day.toString().padLeft(2, '0')}/'
           '${date.month.toString().padLeft(2, '0')}/'
           '${date.year}';
       widget.contract['status'] = 'Còn hiệu lực';
     });
 
     try {
-      await _saveContractToFirebase();
+      await _saveContractToFirebase(
+        updates: {
+          'end': widget.contract['end'],
+          'status': widget.contract['status'],
+        },
+      );
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã gia hạn hợp đồng')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Đã gia hạn hợp đồng')));
     } catch (e) {
       widget.contract
         ..clear()
@@ -136,9 +153,8 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
       if (!mounted) return;
       setState(() {});
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi lưu gia hạn: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Lỗi lưu gia hạn: $e')));
     }
   }
 
@@ -147,9 +163,7 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Thanh lý hợp đồng?'),
-        content: const Text(
-          'Hợp đồng sẽ chuyển sang trạng thái đã thanh lý.',
-        ),
+        content: const Text('Hợp đồng sẽ chuyển sang trạng thái đã thanh lý.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -172,24 +186,22 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
     });
 
     try {
-      await _saveContractToFirebase();
+      await _saveContractToFirebase(
+        updates: {'status': widget.contract['status']},
+      );
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Đã thanh lý hợp đồng trên Firebase'),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Đã thanh lý hợp đồng')));
     } catch (e) {
       widget.contract['status'] = oldStatus ?? '';
 
       if (!mounted) return;
       setState(() {});
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi thanh lý hợp đồng: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Lỗi thanh lý hợp đồng: $e')));
     }
   }
 
@@ -221,6 +233,7 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
   Widget build(BuildContext context) {
     final c = widget.contract;
     final closed = c['status'] == 'Đã thanh lý';
+    final members = _members();
     return Scaffold(
       backgroundColor: canvas,
       appBar: AppBar(
@@ -242,7 +255,14 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
           InfoCard(
             title: 'Thông tin người thuê',
             children: [
-              InfoLine('Họ và tên', c['name'] ?? ''),
+              if (members.isEmpty)
+                InfoLine('Họ và tên', c['name'] ?? '')
+              else
+                for (final member in members)
+                  InfoLine(
+                    (member['role'] ?? 'Thành viên').toString(),
+                    (member['name'] ?? '').toString(),
+                  ),
               InfoLine('Số điện thoại', c['phone'] ?? ''),
               InfoLine('Email', c['email'] ?? ''),
               InfoLine('CCCD', c['identity'] ?? ''),
@@ -252,8 +272,8 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
             title: 'Thông tin phòng',
             children: [
               InfoLine('Phòng', c['room'] ?? ''),
-              const Text(
-                'Phòng khép kín, có cửa sổ',
+              Text(
+                c['description'] ?? 'Chưa cập nhật',
                 style: TextStyle(color: muted),
               ),
             ],
@@ -265,8 +285,6 @@ class _ContractDetailPageState extends State<ContractDetailPage> {
               InfoLine('Tiền đặt cọc', money(c['deposit'])),
               const InfoLine('Kỳ thanh toán', 'Đóng 1 tháng/lần'),
               const InfoLine('Ngày thanh toán', 'Mùng 5 hàng tháng'),
-              for (final s in serviceList)
-                InfoLine(s['name']!, '${money(s['price'])}/${s['unit']}'),
             ],
           ),
           InfoCard(

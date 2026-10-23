@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-import '../data/mock_data.dart';
 import '../widgets/form_widgets.dart';
 import 'room_page.dart';
 import 'login_page.dart';
-import 'tenant_detail_page.dart';
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
@@ -26,8 +25,25 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  void _openTenantContract() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Chưa có thông tin hợp đồng.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final displayName = user?.displayName?.trim().isNotEmpty == true
+        ? user!.displayName!
+        : 'Tài khoản';
+    final initials = displayName
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
+
     return Scaffold(
       backgroundColor: canvas,
       appBar: AppBar(title: const Text('Tài khoản')),
@@ -48,10 +64,10 @@ class _AccountPageState extends State<AccountPage> {
             ),
             child: Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 28,
                   backgroundColor: Color(0xFFEAF0FF),
-                  child: Text('NA', style: TextStyle(color: blue)),
+                  child: Text(initials, style: const TextStyle(color: blue)),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -59,12 +75,12 @@ class _AccountPageState extends State<AccountPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        profile['name']!,
+                        displayName,
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        profile['role']!,
+                        user?.email ?? user?.phoneNumber ?? '',
                         style: const TextStyle(color: muted, fontSize: 12),
                       ),
                     ],
@@ -89,8 +105,7 @@ class _AccountPageState extends State<AccountPage> {
                   title: const Text('Hợp đồng & đặt cọc'),
                   subtitle: const Text('Xem thông tin thuê phòng'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () =>
-                      _open(TenantDetailPage(tenant: tenantList.first)),
+                  onTap: _openTenantContract,
                 ),
                 ListTile(
                   leading: const Icon(Icons.notifications_outlined),
@@ -129,9 +144,10 @@ class PersonalInfoPage extends StatefulWidget {
 
 class _PersonalInfoPageState extends State<PersonalInfoPage> {
   final formKey = GlobalKey<FormState>();
-  final name = TextEditingController(text: profile['name']);
-  final phone = TextEditingController(text: profile['phone']);
-  final email = TextEditingController(text: profile['email']);
+  final user = FirebaseAuth.instance.currentUser;
+  late final name = TextEditingController(text: user?.displayName ?? '');
+  late final phone = TextEditingController(text: user?.phoneNumber ?? '');
+  late final email = TextEditingController(text: user?.email ?? '');
   @override
   void dispose() {
     name.dispose();
@@ -140,14 +156,21 @@ class _PersonalInfoPageState extends State<PersonalInfoPage> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!formKey.currentState!.validate()) return;
-    profile.addAll({
-      'name': name.text.trim(),
-      'phone': phone.text.trim(),
-      'email': email.text.trim(),
-    });
-    Navigator.pop(context);
+    try {
+      if (user == null) {
+        throw StateError('Bạn chưa đăng nhập.');
+      }
+      await user!.updateDisplayName(name.text.trim());
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không thể lưu thông tin: $error')),
+      );
+    }
   }
 
   @override
@@ -159,8 +182,16 @@ class _PersonalInfoPageState extends State<PersonalInfoPage> {
         padding: const EdgeInsets.all(20),
         children: [
           FormInput('Họ và tên', name),
-          FormInput('Số điện thoại', phone),
-          FormInput('Email', email),
+          TextField(
+            controller: phone,
+            readOnly: true,
+            decoration: const InputDecoration(labelText: 'Số điện thoại'),
+          ),
+          TextField(
+            controller: email,
+            readOnly: true,
+            decoration: const InputDecoration(labelText: 'Email'),
+          ),
           FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),
         ],
       ),

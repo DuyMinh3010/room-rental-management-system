@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
 import '../widgets/form_widgets.dart';
 import 'verify_page.dart';
 
@@ -39,9 +38,11 @@ class _RegisterPageState extends State<RegisterPage> {
           .showSnackBar(SnackBar(content: Text(error)));
       return;
     }
-    final account = Map<String, String>.from(profile);
-    account['name'] = name.text.trim();
-    account['role'] = role;
+    final account = <String, String>{
+      'name': name.text.trim(),
+      'role': role,
+      (contact.text.contains('@') ? 'email' : 'phone'): contact.text.trim(),
+    };
     account[contact.text.contains('@') ? 'email' : 'phone'] = contact.text
         .trim();
     Navigator.push(

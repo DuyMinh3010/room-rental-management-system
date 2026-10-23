@@ -8,8 +8,12 @@ import 'invoice_page.dart';
 import 'maintenance_page.dart';
 import 'contract_page.dart';
 import 'account_page.dart';
+
 import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
 const blue = Color(0xFF2463F5);
 const ink = Color(0xFF172033);
 const muted = Color(0xFF61738E);
@@ -27,8 +31,9 @@ class _RoomPageState extends State<RoomPage> {
   int filter = 0;
   String query = '';
 
-  final CollectionReference<Map<String, dynamic>> _roomsRef =
-  FirebaseFirestore.instance.collection('rooms');
+  final CollectionReference<Map<String, dynamic>> _roomsRef = FirebaseFirestore
+      .instance
+      .collection('rooms');
 
   List<Map<String, String>> rooms = [];
 
@@ -40,7 +45,7 @@ class _RoomPageState extends State<RoomPage> {
     super.initState();
 
     _roomsSubscription = _roomsRef.snapshots().listen(
-          (snapshot) {
+      (snapshot) {
         final loadedRooms = snapshot.docs.map((doc) {
           final data = doc.data();
 
@@ -66,7 +71,13 @@ class _RoomPageState extends State<RoomPage> {
       },
       onError: (Object error) {
         if (mounted) {
-          _msg('Không tải được dữ liệu phòng: $error');
+          final message =
+              error is FirebaseException && error.code == 'permission-denied'
+              ? 'Firestore từ chối đọc phòng. Đăng nhập bằng tài khoản có '
+                    'tài liệu managers/${FirebaseAuth.instance.currentUser?.uid ?? "(chưa đăng nhập)"} '
+                    'và enabled = true.'
+              : 'Không tải được dữ liệu phòng: $error';
+          _msg(message);
         }
       },
     );
@@ -80,7 +91,7 @@ class _RoomPageState extends State<RoomPage> {
     }
 
     final text = value.toString();
-    return text.contains('đ') ? text : '${text}đ/tháng';
+    return text.contains('đ') ? text : '$text\u0111/tháng';
   }
 
   String _formatArea(dynamic value) {
@@ -100,12 +111,19 @@ class _RoomPageState extends State<RoomPage> {
     if (value == null) return '0đ';
     if (value is num) return '${value.toStringAsFixed(0)}đ';
     final text = value.toString();
-    return text.contains('đ') ? text : '${text}đ';
+    return text.contains('đ') ? text : '$text\u0111';
   }
 
-  void _msg(String message) =>
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+  void _msg(
+    String message, {
+    Color backgroundColor = const Color(0xFFC62828),
+  }) => ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: backgroundColor,
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
   Future<void> _open(Map<String, String> room, {int tab = 0}) async {
     final oldRoom = Map<String, String>.from(room);
     await Navigator.push(
@@ -119,11 +137,9 @@ class _RoomPageState extends State<RoomPage> {
       if (oldRoom.keys.any((key) => oldRoom[key] != room[key])) {
         filter = 0;
         query = '';
-        
       }
     });
   }
-
 
   Future<void> _edit([Map<String, String>? room]) async {
     final result = await Navigator.push<Map<String, String>>(
@@ -141,61 +157,17 @@ class _RoomPageState extends State<RoomPage> {
 
     if (result == null || !mounted) return;
 
-    int parseMoney(String? value) {
-      return int.tryParse(
-        (value ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
-      ) ??
-          0;
-    }
+    if (!mounted) return;
 
-    try {
-      final data = <String, dynamic>{
-        'name': result['name'] ?? '',
-        'status': result['status'] ?? 'Trống',
-        'price': parseMoney(result['price']),
-        'deposit': parseMoney(result['deposit']),
-        'area': double.tryParse(
-          (result['area'] ?? '')
-              .replaceAll('m²', '')
-              .replaceAll(',', '.')
-              .trim(),
-        ) ??
-            0,
-        'people': int.tryParse(
-          (result['people'] ?? '')
-              .replaceAll(RegExp(r'[^0-9]'), ''),
-        ) ??
-            0,
-        'zone': result['zone'] ?? '',
-        'billingDay': result['billingDay'] ?? '05',
-        'description': result['description'] ?? '',
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
+    setState(() {
+      filter = 0;
+      query = '';
+    });
 
-      final docId = room?['_docId'];
-
-      if (docId == null) {
-        data['createdAt'] = FieldValue.serverTimestamp();
-        await _roomsRef.add(data);
-      } else {
-        await _roomsRef.doc(docId).update(data);
-      }
-
-      if (!mounted) return;
-
-      setState(() {
-        filter = 0;
-        query = '';
-
-      });
-
-      _msg(docId == null
-          ? 'Đã thêm phòng lên Firebase'
-          : 'Đã cập nhật phòng trên Firebase');
-    } catch (e) {
-      if (!mounted) return;
-      _msg('Không thể lưu phòng lên Firebase: $e');
-    }
+    _msg(
+      room == null ? 'Đã thêm phòng' : 'Đã cập nhật phòng',
+      backgroundColor: const Color(0xFF2E7D32),
+    );
   }
 
   @override
@@ -255,7 +227,6 @@ class _RoomPageState extends State<RoomPage> {
                   ),
                   const SizedBox(height: 12),
                   TextField(
-
                     onChanged: (v) => setState(() => query = v),
                     style: const TextStyle(fontSize: 12),
                     decoration: InputDecoration(

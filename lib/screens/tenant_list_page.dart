@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -17,8 +16,25 @@ class _TenantListPageState extends State<TenantListPage> {
   String searchText = '';
 
   // Chuyển dữ liệu hợp đồng thành dữ liệu hiển thị khách thuê.
-  Map<String, String> _toTenant(Map<String, dynamic> c) {
-    final name = (c['name'] ?? '').toString();
+  List<Map<String, String>> _toTenants(
+    Map<String, dynamic> c,
+    String documentId,
+  ) {
+    final savedMembers = c['members'];
+    final members = savedMembers is List
+        ? savedMembers.whereType<Map>().toList()
+        : <Map>[];
+    final tenantMembers = members.isEmpty
+        ? [
+            <String, dynamic>{
+              'name': c['name'] ?? '',
+              'role': c['memberRole'] ?? 'Trưởng phòng',
+              'phone': c['phone'] ?? '',
+              'email': c['email'] ?? '',
+              'identity': c['identity'] ?? '',
+            },
+          ]
+        : members;
     final start = (c['start'] ?? '').toString();
     final end = (c['end'] ?? '').toString();
     final status = (c['status'] ?? '').toString();
@@ -33,47 +49,52 @@ class _TenantListPageState extends State<TenantListPage> {
       tenantStatus = 'Đã kết thúc';
     }
 
-    String contractPeriod = '';
-    if (start.isNotEmpty || end.isNotEmpty) {
-      contractPeriod = '$start → $end';
-    }
+    final contractPeriod = start.isNotEmpty || end.isNotEmpty
+        ? '$start → $end'
+        : '';
 
-    return {
-      'id': (c['id'] ?? '').toString(),
-      'initial': name.trim().isEmpty
+    return List.generate(tenantMembers.length, (index) {
+      final member = tenantMembers[index];
+      final name = (member['name'] ?? '').toString();
+      final nameParts = name.trim().split(RegExp(r'\s+'));
+      final initial = name.trim().isEmpty
           ? '?'
-          : name.trim().split(RegExp(r'\s+')).length == 1
-          ? name.trim().substring(0, 1).toUpperCase()
-          : '${name.trim().split(RegExp(r'\s+')).first[0]}'
-          '${name.trim().split(RegExp(r'\s+')).last[0]}'
-          .toUpperCase(),
-      'name': name,
-      'room': (c['room'] ?? '').toString(),
-      'phone': (c['phone'] ?? '').toString(),
-      'email': (c['email'] ?? '').toString(),
-      'identity': (c['identity'] ?? '').toString(),
-      'birthday': (c['birthday'] ?? '').toString(),
-      'gender': (c['gender'] ?? '').toString(),
-      'address': (c['address'] ?? '').toString(),
-      'job': (c['job'] ?? '').toString(),
-      'residence': (c['residence'] ?? '').toString(),
-      'note': (c['note'] ?? '').toString(),
-      'contract': contractPeriod,
-      'start': start,
-      'end': end,
-      'rent': (c['rent'] ?? '').toString(),
-      'deposit': (c['deposit'] ?? '').toString(),
-      'status': tenantStatus,
-      'memberRole': (c['memberRole'] ?? 'Trưởng phòng').toString(),
-    };
+          : nameParts.length == 1
+          ? nameParts.first.substring(0, 1).toUpperCase()
+          : '${nameParts.first[0]}${nameParts.last[0]}'.toUpperCase();
+
+      return {
+        'id': documentId,
+        'documentId': documentId,
+        'memberIndex': '$index',
+        'initial': initial,
+        'name': name,
+        'room': (c['room'] ?? '').toString(),
+        'phone': (member['phone'] ?? '').toString(),
+        'email': (member['email'] ?? '').toString(),
+        'identity': (member['identity'] ?? '').toString(),
+        'birthday': (member['birthday'] ?? '').toString(),
+        'gender': (member['gender'] ?? '').toString(),
+        'address': (member['address'] ?? '').toString(),
+        'job': (member['job'] ?? '').toString(),
+        'residence': (member['residence'] ?? '').toString(),
+        'note': (member['note'] ?? '').toString(),
+        'contract': (c['id'] ?? '').toString(),
+        'contractPeriod': contractPeriod,
+        'start': start,
+        'end': end,
+        'rent': (c['rent'] ?? '').toString(),
+        'deposit': (c['deposit'] ?? '').toString(),
+        'status': tenantStatus,
+        'memberRole': (member['role'] ?? 'Trưởng phòng').toString(),
+      };
+    });
   }
 
   Future<void> _detail(Map<String, String> tenant) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => TenantDetailPage(tenant: tenant),
-      ),
+      MaterialPageRoute(builder: (_) => TenantDetailPage(tenant: tenant)),
     );
   }
 
@@ -95,7 +116,7 @@ class _TenantListPageState extends State<TenantListPage> {
                   padding: const EdgeInsets.all(20),
                   child: Text(
                     'Không thể tải khách thuê từ Firebase:\n'
-                        '${snapshot.error}',
+                    '${snapshot.error}',
                   ),
                 ),
               );
@@ -103,40 +124,33 @@ class _TenantListPageState extends State<TenantListPage> {
 
             if (snapshot.connectionState == ConnectionState.waiting &&
                 !snapshot.hasData) {
-              return const Center(
-                child: CircularProgressIndicator(),
-              );
+              return const Center(child: CircularProgressIndicator());
             }
 
             // Chỉ lấy hợp đồng còn hiệu lực hoặc sắp hết hạn.
             final tenants = (snapshot.data?.docs ?? [])
-                .map((doc) => _toTenant(doc.data()))
+                .expand((doc) => _toTenants(doc.data(), doc.id))
                 .where(
                   (t) =>
-              t['status'] == 'Đang thuê' ||
-                  t['status'] == 'Sắp hết hạn',
-            )
+                      t['status'] == 'Đang thuê' ||
+                      t['status'] == 'Sắp hết hạn',
+                )
                 .toList();
 
-            const statuses = [
-              'Tất cả',
-              'Trưởng phòng',
-              'Thành viên',
-            ];
+            const statuses = ['Tất cả', 'Trưởng phòng', 'Thành viên'];
 
             final q = searchText.trim().toLowerCase();
 
             final shown = tenants.where((t) {
-              final matchFilter = selectedFilter == 0 ||
+              final matchFilter =
+                  selectedFilter == 0 ||
                   t['memberRole'] == statuses[selectedFilter];
 
               final matchSearch = [
                 'name',
                 'room',
                 'phone',
-              ].any(
-                    (key) => (t[key] ?? '').toLowerCase().contains(q),
-              );
+              ].any((key) => (t[key] ?? '').toLowerCase().contains(q));
 
               return matchFilter && matchSearch;
             }).toList();
@@ -258,7 +272,7 @@ class _TenantListPageState extends State<TenantListPage> {
                             ),
                           ),
                         ...shown.map(
-                              (tenant) => Padding(
+                          (tenant) => Padding(
                             padding: const EdgeInsets.only(bottom: 11),
                             child: _tenantCard(tenant),
                           ),
@@ -352,10 +366,7 @@ class _TenantListPageState extends State<TenantListPage> {
                   const SizedBox(height: 4),
                   Text(
                     room,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey,
-                    ),
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
                   Row(
@@ -402,10 +413,7 @@ class _TenantListPageState extends State<TenantListPage> {
             ),
             const SizedBox(width: 6),
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 9,
-                vertical: 6,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
               decoration: BoxDecoration(
                 color: statusBackground,
                 borderRadius: BorderRadius.circular(20),

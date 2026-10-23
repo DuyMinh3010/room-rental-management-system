@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'room_page.dart';
 import 'register_page.dart';
 import 'account_page.dart';
-import '../data/mock_data.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -15,15 +15,115 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   bool isLandlord = true;
   bool hidePassword = true;
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
 
-  void _login() {
-    profile['role'] = isLandlord ? 'Chủ trọ' : 'Người thuê';
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => isLandlord ? const RoomPage() : const AccountPage(),
-      ),
-    );
+  bool isLoading = false;
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng nhập email và mật khẩu')),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      final user = credential.user;
+      if (isLandlord && user != null) {
+        final manager = await FirebaseFirestore.instance
+            .collection('managers')
+            .doc(user.uid)
+            .get();
+
+        if (!manager.exists || manager.data()?['enabled'] != true) {
+          await FirebaseAuth.instance.signOut();
+          if (!mounted) return;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 10),
+              content: Text(
+                'Tài khoản chưa được cấp quyền quản lý. Trong Firestore, '
+                'tạo managers/${user.uid} với enabled = true (Boolean), '
+                'rồi đăng nhập lại.',
+              ),
+            ),
+          );
+          return;
+        }
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => isLandlord ? const RoomPage() : const AccountPage(),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message;
+
+      switch (e.code) {
+        case 'user-not-found':
+          message = 'Không tìm thấy tài khoản này.';
+          break;
+        case 'wrong-password':
+        case 'invalid-credential':
+          message = 'Email hoặc mật khẩu không chính xác.';
+          break;
+        case 'invalid-email':
+          message = 'Email không hợp lệ.';
+          break;
+        case 'too-many-requests':
+          message = 'Bạn thử đăng nhập quá nhiều lần. Vui lòng thử lại sau.';
+          break;
+        default:
+          message = 'Đăng nhập thất bại: ${e.message ?? e.code}';
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+
+      final message = e.code == 'permission-denied'
+          ? 'Firebase từ chối kiểm tra quyền quản lý (permission-denied). '
+                'Hãy kiểm tra Firestore Rules đã publish đúng project '
+                'quan-li-phong chưa.'
+          : 'Không kiểm tra được quyền Firebase (${e.code}): ${e.message ?? ''}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(duration: const Duration(seconds: 10), content: Text(message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Đã xảy ra lỗi: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
+    }
   }
 
   void _register() {
@@ -136,6 +236,7 @@ class _LoginPageState extends State<LoginPage> {
 
                           const Text(
                             "SĐT/Email",
+
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
@@ -146,6 +247,7 @@ class _LoginPageState extends State<LoginPage> {
 
                           TextField(
                             keyboardType: TextInputType.emailAddress,
+                            controller: emailController,
                             decoration: InputDecoration(
                               hintText: "@gmail.com",
                               hintStyle: const TextStyle(
@@ -185,6 +287,7 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 8),
 
                           TextField(
+                            controller: passwordController,
                             obscureText: hidePassword,
                             decoration: InputDecoration(
                               hintText: "••••••••",
@@ -301,22 +404,35 @@ class _LoginPageState extends State<LoginPage> {
                             width: double.infinity,
                             height: 54,
                             child: ElevatedButton(
-                              onPressed: _login,
+                              onPressed: isLoading ? null : _login,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF3167E9),
                                 foregroundColor: Colors.white,
+                                disabledBackgroundColor: const Color(
+                                  0xFF3167E9,
+                                ),
+                                disabledForegroundColor: Colors.white,
                                 elevation: 0,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(13),
                                 ),
                               ),
-                              child: const Text(
-                                "Đăng nhập",
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              child: isLoading
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text(
+                                      "Đăng nhập",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                           ),
 

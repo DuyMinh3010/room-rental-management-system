@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
 import '../widgets/form_widgets.dart';
 import '../widgets/payment_qr_preview.dart';
 import 'room_page.dart';
+import '../utils/formatters.dart';
 
 class InvoiceCreatePage extends StatefulWidget {
   const InvoiceCreatePage({super.key});
@@ -13,13 +13,13 @@ class InvoiceCreatePage extends StatefulWidget {
 
 class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
   final formKey = GlobalKey<FormState>();
-  final period = TextEditingController(text: '01/05/2026 - 31/05/2026');
-  final rent = TextEditingController(text: '3500000');
-  final electric = TextEditingController(text: '130');
-  final water = TextEditingController(text: '10');
-  final wifi = TextEditingController(text: '100000');
-  final trash = TextEditingController(text: '20000');
-  String room = 'P.101';
+  final period = TextEditingController();
+  final rent = TextEditingController();
+  final electric = TextEditingController();
+  final water = TextEditingController();
+  final wifi = TextEditingController();
+  final trash = TextEditingController();
+  String? room;
   String method = 'Chuyển khoản';
   int get electricFee => (int.tryParse(electric.text) ?? 0) * 3500;
   int get waterFee => (int.tryParse(water.text) ?? 0) * 20000;
@@ -51,18 +51,15 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
 
   void _save() {
     if (!formKey.currentState!.validate()) return;
-    final tenants = tenantList
-        .where((t) => t['room']!.contains(room.replaceAll('P.', '')))
-        .toList();
-    int number = 1;
-    for (final bill in invoiceList) {
-      final oldNumber = int.tryParse(bill['id']!.replaceAll('HD-', '')) ?? 0;
-      if (oldNumber >= number) number = oldNumber + 1;
+    if (room == null || room!.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Vui lòng chọn phòng.')));
+      return;
     }
     Navigator.pop(context, <String, String>{
-      'id': 'HD-${number.toString().padLeft(4, '0')}',
-      'room': room,
-      'tenant': tenants.isEmpty ? 'Chưa có người thuê' : tenants.first['name']!,
+      'id': 'HD-${DateTime.now().millisecondsSinceEpoch}',
+      'room': room!,
+      'tenant': 'Chưa có người thuê',
       'period': period.text.trim(),
       'rent': rent.text,
       'electric': '$electricFee',
@@ -87,7 +84,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
           padding: const EdgeInsets.all(20),
           children: [
             DropdownButtonFormField<String>(
-              value: room,
+              initialValue: room,
               decoration: const InputDecoration(labelText: 'Phòng'),
               items: names
                   .map((r) => DropdownMenuItem(value: r, child: Text(r)))
