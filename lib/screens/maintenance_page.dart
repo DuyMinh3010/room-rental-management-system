@@ -1,3 +1,4 @@
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -34,7 +35,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
       MaterialPageRoute(builder: (_) => const MaintCreatePage()),
     );
 
-    if (!mounted || saved != true) return;
+     if (!mounted || saved != true) return;
 
     setState(() => _filter = 0);
 
@@ -49,7 +50,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
     final data = doc.data();
     final status = (data['status'] ?? 'Mới').toString();
 
-    final nextStatus = await showModalBottomSheet<String>(
+    final action = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
@@ -109,34 +110,67 @@ class _MaintenancePageState extends State<MaintenancePage> {
                     style: FilledButton.styleFrom(backgroundColor: blue),
                     child: const Text('Hoàn thành'),
                   ),
-                ),
+                ),    
+                const SizedBox(height: 10),
+SizedBox(
+  width: double.infinity,
+  child: ElevatedButton(
+    onPressed: () => Navigator.pop(ctx, 'Xóa'),
+    style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.red,
+      foregroundColor: Colors.white,
+    ),
+    child: const Text('Xóa yêu cầu'),
+  ),
+),       
             ],
           ),
         ),
       ),
     );
 
-    if (!mounted || nextStatus == null) return;
+    
+    if (!mounted || action == null) return;
 
-    try {
-      await _maintenanceService.updateMaintenanceStatus(
-        documentId: doc.id,
-        status: nextStatus,
-      );
+try {
+  if (action == 'Xóa') {
+    await _maintenanceService.deleteMaintenanceRequest(
+      documentId: doc.id,
+    );
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Đã cập nhật: $nextStatus')),
-      );
-    } catch (e) {
-      if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Đã xóa yêu cầu bảo trì'),
+      ),
+    );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Không thể cập nhật trạng thái: $e')),
-      );
-    }
+    return;
   }
+
+  await _maintenanceService.updateMaintenanceStatus(
+    documentId: doc.id,
+    status: action,
+  );
+
+  if (!mounted) return;
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text('Đã cập nhật: $action'),
+    ),
+  );
+} catch (e) {
+  if (!mounted) return;
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text('Thao tác thất bại: $e'),
+    ),
+  );
+}
+}
 
   @override
   Widget build(BuildContext context) {
@@ -145,6 +179,31 @@ class _MaintenancePageState extends State<MaintenancePage> {
       body: SafeArea(
         child: Column(
           children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 26, 20, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Bảo trì',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: ink,
+                      ),
+                    ),
+                    SizedBox(height: 7),
+                    Text(
+                      'Theo dõi yêu cầu sửa chữa',
+                      style: TextStyle(fontSize: 12, color: muted),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
             Expanded(
               child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: _maintenanceService.getMaintenanceRequests(),
@@ -177,7 +236,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       .length;
 
                   final shown = docs.where((doc) {
-                    final status = (doc.data()['status'] ?? 'Mới').toString();
+                    final status =
+                        (doc.data()['status'] ?? 'Mới').toString();
 
                     if (_filter == 1) return status == 'Mới';
                     if (_filter == 2) return status == 'Đang xử lý';
@@ -186,22 +246,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
                   }).toList();
 
                   return ListView(
-                    padding: const EdgeInsets.fromLTRB(20, 26, 20, 90),
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 90),
                     children: [
-                      const Text(
-                        'Bảo trì',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: ink,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      const Text(
-                        'Theo dõi yêu cầu sửa chữa',
-                        style: TextStyle(fontSize: 12, color: muted),
-                      ),
-                      const SizedBox(height: 29),
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
@@ -219,7 +265,10 @@ class _MaintenancePageState extends State<MaintenancePage> {
                           child: Center(
                             child: Text(
                               'Chưa có yêu cầu bảo trì',
-                              style: TextStyle(color: muted, fontSize: 12),
+                              style: TextStyle(
+                                color: muted,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ),
@@ -257,7 +306,10 @@ class _MaintenancePageState extends State<MaintenancePage> {
         onTap: () => setState(() => _filter = index),
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 8,
+          ),
           decoration: BoxDecoration(
             color: _filter == index ? blue : Colors.white,
             borderRadius: BorderRadius.circular(14),
@@ -343,7 +395,11 @@ class _MaintenancePageState extends State<MaintenancePage> {
                     ),
                   ),
                   const Spacer(),
-                  const Icon(Icons.chevron_right, color: muted, size: 22),
+                  const Icon(
+                    Icons.chevron_right,
+                    color: muted,
+                    size: 22,
+                  ),
                 ],
               ),
             ],

@@ -47,4 +47,9 @@ class MaintenanceService {
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
+  Future<void> deleteMaintenanceRequest({
+    required String documentId,
+  }){
+    return _col.doc(documentId).delete();
+  }
 }

@@ -1,28 +1,7 @@
+
 import 'package:flutter/material.dart';
-
-import 'room_page.dart';
-import 'service_edit_page.dart';
-import '../data/mock_data.dart';
-import '../widgets/form_widgets.dart';
-
-final meterData = <String, Map<String, String>>{
-  '09/2026-P.101': {
-    'electric': '120',
-    'water': '15',
-    'oldElectric': '1250',
-    'oldWater': '48',
-    'newElectric': '1370',
-    'newWater': '63',
-  },
-  '09/2026-P.102': {
-    'electric': '95',
-    'water': '12',
-    'oldElectric': '1250',
-    'oldWater': '48',
-    'newElectric': '1345',
-    'newWater': '60',
-  },
-};
+import '../services/meter_reading_service.dart';
+import 'meter_reading_screen.dart';
 
 class ServicePage extends StatefulWidget {
   const ServicePage({super.key});
@@ -32,409 +11,797 @@ class ServicePage extends StatefulWidget {
 }
 
 class _ServicePageState extends State<ServicePage> {
-  int tab = 0;
-  String query = '';
-  String month = '09/2026';
-  List<String> get roomNames => roomList.map((r) => r['name']!).toList();
+  final Color primaryColor = const Color(0xFF2864F0);
+  final Color backgroundColor = const Color(0xFFF4F6FA);
+  final TextEditingController searchController = TextEditingController();
+  final MeterReadingService readingService = MeterReadingService();
 
-  Future<void> _enter(String room) async {
-    final key = '$month-$room';
-    final old = meterData[key];
-    final result = await Navigator.push<Map<String, String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MeterInputPage(room: room, month: month, data: old),
-      ),
-    );
-    if (result == null || !mounted) return;
-    setState(() => meterData[key] = result);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('Đã lưu chỉ số $room')));
+  int selectedTab = 0;
+  int selectedBottom = 2;
+
+  final String currentMonth = '09/2026';
+
+  final List<String> rooms = [
+    'P.101',
+    'P.102',
+    'P.103',
+    'P.104',
+  ];
+
+  final Map<String, bool> savedRooms = {};
+
+  final List<Map<String, dynamic>> services = [
+    {
+      'name': 'Điện',
+      'price': '3.500đ/kWh',
+      'type': 'Theo chỉ số',
+      'icon': Icons.bolt,
+      'color': Color(0xFF2864F0),
+    },
+    {
+      'name': 'Nước',
+      'price': '20.000đ/m³',
+      'type': 'Theo chỉ số',
+      'icon': Icons.water_drop,
+      'color': Color(0xFF079BB5),
+    },
+    {
+      'name': 'WiFi',
+      'price': '100.000đ/tháng',
+      'type': 'Theo phòng',
+      'icon': Icons.wifi,
+      'color': Color(0xFF853DF4),
+    },
+    {
+      'name': 'Đổ rác',
+      'price': '20.000đ/tháng',
+      'type': 'Theo phòng',
+      'icon': Icons.delete_outline,
+      'color': Color(0xFFFF510B),
+    },
+    {
+      'name': 'Gửi xe',
+      'price': '100.000đ/người',
+      'type': 'Theo người',
+      'icon': Icons.local_parking,
+      'color': Color(0xFF16A653),
+    },
+  ];
+
+  List<Map<String, dynamic>> get filteredServices {
+    return services.where((service) {
+      return service['name']
+          .toString()
+          .toLowerCase()
+          .contains(searchController.text.trim().toLowerCase());
+    }).toList();
   }
 
-  Future<void> _editService([Map<String, String>? service]) async {
-    final result = await Navigator.push<Map<String, String>>(
-      context,
-      MaterialPageRoute(builder: (_) => ServiceEditPage(service: service)),
-    );
-    if (result == null || !mounted) return;
-    if (serviceList.any((s) => s != service && s['name'] == result['name'])) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Dịch vụ này đã có. Hãy chọn dịch vụ để sửa.'),
-        ),
-      );
-      return;
-    }
-    setState(() {
-      if (service == null) {
-        serviceList.add(result);
-      } else {
-        service.addAll(result);
+  @override
+  void initState() {
+    super.initState();
+    _loadRoomStatuses();
+  }
+
+  Future<void> _loadRoomStatuses() async {
+    for (final room in rooms) {
+      try {
+        final data = await readingService.getReading(
+          room: room,
+          month: currentMonth,
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          savedRooms[room] =
+              data != null && data['isSaved'] == true;
+        });
+      } catch (_) {
+        if (!mounted) return;
+
+        setState(() {
+          savedRooms[room] = false;
+        });
       }
+    }
+  }
+
+  Future<void> _openMeterReading(String room) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const MeterReadingScreen(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result == true) {
+      await _loadRoomStatuses();
+    }
+  }
+
+  String _getPriceSuffix(String name) {
+    switch (name) {
+      case 'Điện':
+        return 'đ/kWh';
+      case 'Nước':
+        return 'đ/m³';
+      case 'WiFi':
+      case 'Đổ rác':
+        return 'đ/tháng';
+      case 'Gửi xe':
+        return 'đ/người';
+      default:
+        return 'đ';
+    }
+  }
+
+  String _getNumericPrice(String price) {
+    return price
+        .replaceAll('đ', '')
+        .replaceAll('/kWh', '')
+        .replaceAll('/m³', '')
+        .replaceAll('/tháng', '')
+        .replaceAll('/người', '')
+        .replaceAll('.', '')
+        .trim();
+  }
+
+  void editService(Map<String, dynamic> service) {
+    final nameController = TextEditingController(
+      text: service['name'].toString(),
+    );
+    final priceController = TextEditingController(
+      text: _getNumericPrice(service['price'].toString()),
+    );
+
+    String type = service['type'].toString();
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: Text('Sửa ${service['name']}'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Tên dịch vụ',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: priceController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Đơn giá',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: type,
+                      decoration: const InputDecoration(
+                        labelText: 'Loại tính phí',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'Theo phòng',
+                          child: Text('Theo phòng'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Theo người',
+                          child: Text('Theo người'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Theo chỉ số',
+                          child: Text('Theo chỉ số'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => type = value);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Hủy'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    final price = double.tryParse(
+                      priceController.text.replaceAll('.', '').trim(),
+                    );
+
+                    if (name.isEmpty || price == null || price < 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Vui lòng nhập thông tin hợp lệ.'),
+                        ),
+                      );
+                      return;
+                    }
+
+                    setState(() {
+                      service['name'] = name;
+                      service['price'] =
+                          '${price.toInt()}${_getPriceSuffix(name)}';
+                      service['type'] = type;
+                    });
+
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text('Lưu'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      nameController.dispose();
+      priceController.dispose();
     });
+  }
+
+  void addService() {
+    final nameController = TextEditingController();
+    final priceController = TextEditingController();
+    String type = 'Theo phòng';
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Text('Thêm dịch vụ'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Tên dịch vụ',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: priceController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Đơn giá',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: type,
+                      decoration: const InputDecoration(
+                        labelText: 'Loại tính phí',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'Theo phòng',
+                          child: Text('Theo phòng'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Theo người',
+                          child: Text('Theo người'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Theo chỉ số',
+                          child: Text('Theo chỉ số'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => type = value);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Hủy'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    final price = double.tryParse(
+                      priceController.text.replaceAll('.', '').trim(),
+                    );
+
+                    if (name.isEmpty || price == null || price < 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Vui lòng nhập thông tin hợp lệ.'),
+                        ),
+                      );
+                      return;
+                    }
+
+                    setState(() {
+                      services.add({
+                        'name': name,
+                        'price':
+                            '${price.toInt()}${_getPriceSuffix(name)}',
+                        'type': type,
+                        'icon': Icons.miscellaneous_services,
+                        'color': primaryColor,
+                      });
+                    });
+
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text('Lưu'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      nameController.dispose();
+      priceController.dispose();
+    });
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: canvas,
+      backgroundColor: backgroundColor,
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.chevron_left, color: ink),
-                      ),
-                      const Text(
-                        'Dịch vụ',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: ink,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 50),
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: List.generate(
-                        2,
-                        (i) => Expanded(
-                          child: InkWell(
-                            onTap: () => setState(() => tab = i),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: tab == i
-                                    ? const Color(0xFFEAF0FF)
-                                    : Colors.white,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  ['Dịch vụ', 'Nhập chỉ số'][i],
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: tab == i ? blue : muted,
-                                    fontWeight: tab == i
-                                        ? FontWeight.w600
-                                        : FontWeight.normal,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                  InkWell(
+                    onTap: () => Navigator.maybePop(context),
+                    child: const Icon(
+                      Icons.chevron_left,
+                      size: 28,
+                      color: Color(0xFF263548),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  if (tab == 1) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: month,
-                          isExpanded: true,
-                          icon: const Icon(
-                            Icons.keyboard_arrow_down,
-                            size: 20,
-                            color: muted,
-                          ),
-                          style: const TextStyle(
-                            color: ink,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          items: ['08/2026', '09/2026', '10/2026']
-                              .map(
-                                (m) =>
-                                    DropdownMenuItem(value: m, child: Text(m)),
-                              )
-                              .toList(),
-                          onChanged: (value) {
-                            if (value != null) setState(() => month = value);
-                          },
-                        ),
-                      ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Dịch vụ',
+                    style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF172235),
                     ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Danh sách phòng',
-                      style: TextStyle(fontSize: 10, color: muted),
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      clipBehavior: Clip.antiAlias,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Column(
-                        children: List.generate(roomNames.length, (i) {
-                          final name = roomNames[i];
-                          final saved = meterData.containsKey('$month-$name');
-                          return Column(
-                            children: [
-                              if (i > 0)
-                                const Divider(
-                                  height: 1,
-                                  color: Color(0xFFE7EAF0),
-                                ),
-                              InkWell(
-                                onTap: () => _enter(name),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 16,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              name,
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w600,
-                                                color: ink,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 5),
-                                            Text(
-                                              saved ? 'Đã nhập' : 'Chưa nhập',
-                                              style: const TextStyle(
-                                                fontSize: 10,
-                                                color: muted,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const Icon(
-                                        Icons.chevron_right,
-                                        color: muted,
-                                        size: 20,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        }),
-                      ),
-                    ),
-                  ] else ...[
-                    TextField(
-                      onChanged: (v) => setState(() => query = v),
-                      decoration: const InputDecoration(
-                        hintText: 'Tìm kiếm dịch vụ...',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    for (final s in serviceList.where(
-                      (s) => s['name']!.toLowerCase().contains(
-                        query.toLowerCase(),
-                      ),
-                    ))
-                      InkWell(
-                        onTap: () => _editService(s),
-                        child: serviceRow(
-                          s['name']!,
-                          '${money(s['price'])}/${s['unit']}',
-                          blue,
-                        ),
-                      ),
-                    OutlinedButton(
-                      onPressed: () => _editService(),
-                      child: const Text('+ Thêm dịch vụ'),
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ),
-            const AppBottomBar(selected: 2),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: SizedBox(
+                width: double.infinity,
+                height: 47,
+                child: TextField(
+                  controller: searchController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Tìm kiếm dịch vụ...',
+                    hintStyle: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF94A0B3),
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search,
+                      size: 20,
+                      color: Color(0xFF94A0B3),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: EdgeInsets.zero,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Container(
+                height: 43,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    _buildTab('Dịch vụ', 0),
+                    _buildTab('Nhập chỉ số', 1),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            Expanded(
+              child: selectedTab == 0
+                  ? _buildServiceList()
+                  : _buildMeterList(),
+            ),
+
+            if (selectedTab == 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: addService,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      '+  Thêm dịch vụ',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => _openMeterReading(rooms.first),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Nhập chỉ số',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget serviceRow(String name, String price, Color color) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
+      bottomNavigationBar: Container(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.circle, size: 14, color: color),
-          const SizedBox(width: 12),
-          Expanded(child: Text(name)),
-          Text(price, style: const TextStyle(fontSize: 12, color: muted)),
-        ],
+        padding: const EdgeInsets.only(top: 5),
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 53,
+            child: Row(
+              children: [
+                _buildBottomItem(Icons.home_outlined, 'Phòng', 0),
+                _buildBottomItem(Icons.people_outline, 'Người thuê', 1),
+                _buildBottomItem(Icons.circle, 'Dịch vụ', 2),
+                _buildBottomItem(Icons.receipt_long_outlined, 'Hóa đơn', 3),
+                _buildBottomItem(Icons.description_outlined, 'Hợp đồng', 4),
+                _buildBottomItem(Icons.build_outlined, 'Bảo trì', 5),
+                _buildBottomItem(Icons.settings_outlined, 'Tài khoản', 6),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
-}
 
-class MeterInputPage extends StatefulWidget {
-  final String room;
-  final String month;
-  final Map<String, String>? data;
-  const MeterInputPage({
-    super.key,
-    required this.room,
-    required this.month,
-    this.data,
-  });
-  @override
-  State<MeterInputPage> createState() => _MeterInputPageState();
-}
+  Widget _buildServiceList() {
+    final items = filteredServices;
 
-class _MeterInputPageState extends State<MeterInputPage> {
-  final formKey = GlobalKey<FormState>();
-  final electric = TextEditingController();
-  final water = TextEditingController();
-  final parking = TextEditingController(text: '0');
-  late double oldElectric;
-  late double oldWater;
-  double get electricUsed =>
-      (double.tryParse(electric.text.replaceAll(',', '.')) ?? oldElectric) -
-      oldElectric;
-  double get waterUsed =>
-      (double.tryParse(water.text.replaceAll(',', '.')) ?? oldWater) - oldWater;
-  @override
-  void initState() {
-    super.initState();
-    oldElectric = double.tryParse(widget.data?['oldElectric'] ?? '') ?? 1250;
-    oldWater = double.tryParse(widget.data?['oldWater'] ?? '') ?? 48;
-    electric.text = widget.data?['newElectric'] ?? '';
-    water.text = widget.data?['newWater'] ?? '';
-    parking.text = widget.data?['parking'] ?? '0';
-    for (final c in [electric, water, parking]) {
-      c.addListener(_refresh);
-    }
-  }
-
-  void _refresh() => setState(() {});
-  @override
-  void dispose() {
-    electric.dispose();
-    water.dispose();
-    parking.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    if (!formKey.currentState!.validate()) return;
-    Navigator.pop(context, <String, String>{
-      'oldElectric': '$oldElectric',
-      'oldWater': '$oldWater',
-      'newElectric': electric.text.replaceAll(',', '.'),
-      'newWater': water.text.replaceAll(',', '.'),
-      'electric': '$electricUsed',
-      'water': '$waterUsed',
-      'parking': parking.text,
-    });
-  }
-
-  Widget _meter(
-    String label,
-    TextEditingController controller,
-    double old,
-    String unit,
-    int price,
-  ) {
-    final used = controller == electric ? electricUsed : waterUsed;
-    return InfoCard(
-      title: label,
-      children: [
-        InfoLine('Đơn giá', '${money('$price')}/$unit'),
-        InfoLine('Chỉ số cũ', '$old $unit'),
-        TextFormField(
-          controller: controller,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: 'Chỉ số mới',
-            suffixText: unit,
-            border: const OutlineInputBorder(),
+    if (items.isEmpty) {
+      return const Center(
+        child: Text(
+          'Không tìm thấy dịch vụ',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF8491A4),
           ),
-          validator: (value) {
-            final n = double.tryParse((value ?? '').replaceAll(',', '.'));
-            return n == null || !n.isFinite || n < old
-                ? 'Chỉ số mới phải lớn hơn hoặc bằng $old'
-                : null;
-          },
         ),
-        const SizedBox(height: 12),
-        InfoLine('Số tiêu thụ', '${used < 0 ? 0 : used} $unit'),
-        InfoLine(
-          'Thành tiền',
-          money('${((used < 0 ? 0 : used) * price).round()}'),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      itemCount: items.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final service = items[index];
+
+        return SizedBox(
+          width: double.infinity,
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => editService(service),
+              child: Container(
+                width: double.infinity,
+                height: 65,
+                padding: const EdgeInsets.symmetric(horizontal: 11),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: service['color'] as Color,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        service['icon'] as IconData,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+
+                    const SizedBox(width: 10),
+
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            service['name'].toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF273548),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            service['type'].toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF91A0B4),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 5),
+
+                    Expanded(
+                      flex: 4,
+                      child: Text(
+                        service['price'].toString(),
+                        textAlign: TextAlign.right,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF485365),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 5),
+
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 21,
+                      color: Color(0xFFA1AEC0),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMeterList() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(15),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Nhập chỉ số điện nước',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                'Kỳ ghi chỉ số: $currentMonth',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF8491A4),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...rooms.map((room) {
+                final saved = savedRooms[room] == true;
+
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    room,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    saved ? 'Đã lưu chỉ số' : 'Chưa nhập chỉ số',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: saved ? Colors.green : Colors.grey,
+                    ),
+                  ),
+                  leading: Icon(
+                    saved
+                        ? Icons.check_circle
+                        : Icons.meeting_room_outlined,
+                    color: saved ? Colors.green : primaryColor,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openMeterReading(room),
+                );
+              }),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: canvas,
-    appBar: AppBar(title: const Text('Nhập chỉ số')),
-    body: Form(
-      key: formKey,
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          InfoLine('Phòng', widget.room),
-          InfoLine('Tháng', widget.month),
-          _meter('Điện', electric, oldElectric, 'kWh', 3500),
-          _meter('Nước', water, oldWater, 'm³', 20000),
-          const InfoCard(
-            title: 'WiFi',
-            children: [InfoLine('Theo phòng', '100.000đ/tháng')],
+  Widget _buildTab(String title, int index) {
+    final selected = selectedTab == index;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() => selectedTab = index);
+        },
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFFE7EFFF)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
           ),
-          const InfoCard(
-            title: 'Đổ rác',
-            children: [InfoLine('Theo phòng', '20.000đ/tháng')],
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: selected
+                  ? primaryColor
+                  : const Color(0xFF8390A4),
+            ),
           ),
-          InfoCard(
-            title: 'Gửi xe',
-            children: [
-              FormInput('Số người gửi xe', parking, number: true),
-              InfoLine(
-                'Thành tiền',
-                money('${(int.tryParse(parking.text) ?? 0) * 100000}'),
-              ),
-            ],
-          ),
-          FilledButton(onPressed: _save, child: const Text('Lưu chỉ số')),
-        ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _buildBottomItem(
+    IconData icon,
+    String title,
+    int index,
+  ) {
+    final selected = selectedBottom == index;
+
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          setState(() => selectedBottom = index);
+        },
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 17,
+              color: selected
+                  ? primaryColor
+                  : const Color(0xFF8190A5),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 8,
+                fontWeight:
+                    selected ? FontWeight.w700 : FontWeight.w400,
+                color: selected
+                    ? primaryColor
+                    : const Color(0xFF8190A5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

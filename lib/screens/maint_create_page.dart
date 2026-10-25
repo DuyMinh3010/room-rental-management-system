@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../services/maintenance_service.dart';
@@ -34,29 +35,41 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  String _tenantOf(Map<String, String> r) {
-    final t = (r['tenant'] ?? r['tenantName'] ?? '').trim();
-    return t;
+  String _tenantOf(Map<String, String> room) {
+    return (room['tenant'] ?? room['tenantName'] ?? '').trim();
+  }
+
+  Map<String, String>? get _selectedRoom {
+    for (final room in roomList) {
+      if (room['name'] == _room) {
+        return room;
+      }
+    }
+    return null;
   }
 
   Future<void> _send() async {
     if (_sent) return;
 
-    final room = _room;
-    if (room == null) {
+    final roomName = _room;
+
+    if (roomName == null) {
       _msg('Vui lòng chọn phòng');
       return;
     }
+
     if (_title.text.trim().isEmpty) {
       _msg('Vui lòng nhập tiêu đề');
       return;
     }
-    if (!roomList.any((r) => r['name'] == room)) {
+
+    final roomData = _selectedRoom;
+
+    if (roomData == null) {
       _msg('Phòng không còn tồn tại. Vui lòng mở lại màn hình');
       return;
     }
 
-    final roomData = roomList.firstWhere((r) => r['name'] == room);
     final tenant = _tenantOf(roomData);
 
     setState(() => _sent = true);
@@ -65,7 +78,7 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
       await _maintenanceService.addMaintenanceRequest(
         title: _title.text.trim(),
         description: _desc.text.trim(),
-        room: room,
+        room: roomName,
         tenantName: tenant.isEmpty ? 'Chưa xác định' : tenant,
         category: _category,
         priority: _priority,
@@ -83,35 +96,110 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
   InputDecoration _fieldDecoration({String? hint}) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: muted, fontSize: 13),
+      hintStyle: const TextStyle(
+        color: muted,
+        fontSize: 13,
+      ),
       filled: true,
       fillColor: Colors.white,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 14,
+      ),
     );
   }
 
   Widget _label(String text) {
     return Padding(
       padding: const EdgeInsets.only(top: 16, bottom: 6),
-      child: Text(text, style: const TextStyle(fontSize: 11, color: muted)),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 11,
+          color: muted,
+        ),
+      ),
     );
   }
 
-  Widget _priorityChip(String label, String value, Color color) {
+  Widget _tenantInfo() {
+    final room = _selectedRoom;
+
+    if (room == null) {
+      return const SizedBox.shrink();
+    }
+
+    final tenant = _tenantOf(room);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.person_outline,
+            color: blue,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Người thuê phòng',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: muted,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tenant.isEmpty ? 'Chưa xác định' : tenant,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _priorityChip(
+    String label,
+    String value,
+    Color color,
+  ) {
     final selected = _priority == value;
+
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: InkWell(
         onTap: () => setState(() => _priority = value),
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 9,
+          ),
           decoration: BoxDecoration(
-            color: selected ? color : color.withValues(alpha: .12),
+            color: selected
+                ? color
+                : color.withValues(alpha: .12),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(
@@ -134,23 +222,29 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
       body: SafeArea(
         child: Column(
           children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       InkWell(
                         onTap: () => Navigator.pop(context),
-                        child: const Icon(Icons.chevron_left, color: ink),
+                        child: const Icon(
+                          Icons.chevron_left,
+                          color: ink,
+                        ),
                       ),
                       const SizedBox(width: 10),
-                      const Text(
-                        'Tạo yêu cầu bảo trì',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: ink,
+                      const Expanded(
+                        child: Text(
+                          'Tạo yêu cầu bảo trì',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: ink,
+                          ),
                         ),
                       ),
                     ],
@@ -158,9 +252,19 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                   const SizedBox(height: 6),
                   const Text(
                     'Gửi yêu cầu sửa chữa đến chủ trọ',
-                    style: TextStyle(fontSize: 11, color: muted),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: muted,
+                    ),
                   ),
-                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                children: [
                   const Text(
                     'Thông tin yêu cầu',
                     style: TextStyle(
@@ -169,50 +273,64 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                       color: ink,
                     ),
                   ),
-
                   _label('Phòng'),
                   DropdownButtonFormField<String>(
                     initialValue: _room,
                     isExpanded: true,
-                    decoration: _fieldDecoration(hint: 'Chọn phòng'),
-                    items: roomList.map((r) {
-                      final name = r['name'] ?? '';
-                      final tenant = _tenantOf(r);
+                    decoration: _fieldDecoration(
+                      hint: 'Chọn phòng',
+                    ),
+                    items: roomList.map((room) {
+                      final name = room['name'] ?? '';
+
                       return DropdownMenuItem<String>(
                         value: name,
                         child: Text(
-                          tenant.isEmpty ? name : '$name · $tenant',
-                          style: const TextStyle(fontSize: 13, color: ink),
+                          name,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: ink,
+                          ),
                         ),
                       );
                     }).toList(),
-                    onChanged: (v) => setState(() => _room = v),
+                    onChanged: (value) {
+                      setState(() => _room = value);
+                    },
                   ),
+                  _tenantInfo(),
 
                   _label('Loại sự cố'),
                   DropdownButtonFormField<String>(
                     initialValue: _category,
                     isExpanded: true,
                     decoration: _fieldDecoration(),
-                    items: _categories
-                        .map((c) => DropdownMenuItem<String>(
-                              value: c,
-                              child: Text(
-                                c,
-                                style: const TextStyle(
-                                    fontSize: 13, color: ink),
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: (v) =>
-                        setState(() => _category = v ?? _category),
+                    items: _categories.map((category) {
+                      return DropdownMenuItem<String>(
+                        value: category,
+                        child: Text(
+                          category,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: ink,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        _category = value ?? _category;
+                      });
+                    },
                   ),
 
                   _label('Tiêu đề'),
                   TextField(
                     controller: _title,
                     style: const TextStyle(fontSize: 13),
-                    decoration: _fieldDecoration(hint: 'Ví dụ: Máy lạnh không mát'),
+                    decoration: _fieldDecoration(
+                      hint: 'Ví dụ: Máy lạnh không mát',
+                    ),
                   ),
 
                   _label('Mô tả chi tiết'),
@@ -231,9 +349,15 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                     children: [
                       _priorityChip('Thấp', 'low', muted),
                       _priorityChip(
-                          'Trung bình', 'medium', const Color(0xFFF26B13)),
+                        'Trung bình',
+                        'medium',
+                        const Color(0xFFF26B13),
+                      ),
                       _priorityChip(
-                          'Khẩn cấp', 'urgent', const Color(0xFFE5484D)),
+                        'Khẩn cấp',
+                        'urgent',
+                        const Color(0xFFE5484D),
+                      ),
                     ],
                   ),
 
@@ -254,12 +378,18 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                             children: [
                               Text(
                                 'Thêm ảnh (tối đa 3 ảnh)',
-                                style: TextStyle(fontSize: 13, color: ink),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: ink,
+                                ),
                               ),
                               SizedBox(height: 2),
                               Text(
                                 'JPG, PNG - không bắt buộc',
-                                style: TextStyle(fontSize: 10, color: muted),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: muted,
+                                ),
                               ),
                             ],
                           ),
@@ -294,7 +424,10 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                   const SizedBox(height: 12),
                   const Text(
                     'Yêu cầu sẽ được gửi đến chủ trọ để xác nhận.',
-                    style: TextStyle(fontSize: 10, color: muted),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: muted,
+                    ),
                   ),
                 ],
               ),
