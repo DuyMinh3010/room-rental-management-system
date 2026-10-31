@@ -1,9 +1,16 @@
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/meter_reading_service.dart';
+import '../services/room_service.dart';
 
 class MeterReadingScreen extends StatefulWidget {
-  const MeterReadingScreen({super.key});
+  final String? initialRoom;
+
+  const MeterReadingScreen({
+    super.key,
+    this.initialRoom,
+  });
 
   @override
   State<MeterReadingScreen> createState() =>
@@ -15,17 +22,21 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
   final Color backgroundColor = const Color(0xFFF5F6F8);
 
   final MeterReadingService readingService = MeterReadingService();
+  final RoomService roomService = RoomService();
 
-  final String room = 'P.101';
+  List<Map<String, String>> rooms = [];
+  String? room;
   final String month = '09/2026';
 
+  StreamSubscription<List<Map<String, String>>>? roomSubscription;
+
   final TextEditingController electricOldController =
-      TextEditingController(text: '1250');
+      TextEditingController(text: '0');
   final TextEditingController electricNewController =
       TextEditingController();
 
   final TextEditingController waterOldController =
-      TextEditingController(text: '48');
+      TextEditingController(text: '0');
   final TextEditingController waterNewController =
       TextEditingController();
 
@@ -88,46 +99,145 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
   @override
   void initState() {
     super.initState();
-    loadReading();
+    room = widget.initialRoom;
+    loadRooms();
+  }
+
+  void loadRooms() {
+    isLoading = true;
+    loadError = null;
+
+    roomSubscription?.cancel();
+
+    try {
+      roomSubscription = roomService.watchRooms().listen(
+        (value) async {
+          if (!mounted) return;
+
+          final preferredRoom = widget.initialRoom ?? room;
+
+          final availableRooms = value
+              .where(
+                (r) =>
+                    r['name'] != null &&
+                    r['name']!.trim().isNotEmpty &&
+                    r['name'] != 'Chưa cập nhật',
+              )
+              .toList();
+
+          final selectedRoom = availableRooms.any(
+            (r) => r['name'] == preferredRoom,
+          )
+              ? preferredRoom
+              : availableRooms.isNotEmpty
+                  ? availableRooms.first['name']
+                  : null;
+
+          final roomChanged = selectedRoom != room;
+
+          setState(() {
+            rooms = availableRooms;
+            room = selectedRoom;
+            loadError = null;
+          });
+
+          if (room != null) {
+            if (roomChanged || isLoading) {
+              await loadReading();
+            }
+          } else {
+            electricOldController.text = '0';
+            electricNewController.clear();
+            waterOldController.text = '0';
+            waterNewController.clear();
+            parkingController.text = '0';
+
+            setState(() {
+              hasSavedReading = false;
+              isLoading = false;
+            });
+          }
+        },
+        onError: (Object e) {
+          if (!mounted) return;
+
+          setState(() {
+            loadError = 'Không tải được danh sách phòng: $e';
+            isLoading = false;
+          });
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        loadError = 'Không tải được danh sách phòng: $e';
+        isLoading = false;
+      });
+    }
   }
 
   Future<void> loadReading() async {
-    if (mounted) {
+    if (room == null) {
+      if (!mounted) return;
+
       setState(() {
-        isLoading = true;
-        loadError = null;
+        isLoading = false;
+        hasSavedReading = false;
       });
+      return;
     }
+
+    final selectedRoom = room!;
+
+    setState(() {
+      isLoading = true;
+      loadError = null;
+    });
 
     try {
       final data = await readingService.getReading(
-        room: room,
+        room: selectedRoom,
         month: month,
       );
 
-      if (!mounted) return;
+      if (!mounted || room != selectedRoom) return;
 
       if (data != null) {
         electricOldController.text =
-            '${data['electricOld'] ?? 1250}';
+            '${data['electricOld'] ?? 0}';
+
         waterOldController.text =
-            '${data['waterOld'] ?? 48}';
+            '${data['waterOld'] ?? 0}';
 
         electricNewController.text =
             data['electricNew']?.toString() ?? '';
+
         waterNewController.text =
             data['waterNew']?.toString() ?? '';
 
         parkingController.text =
             '${data['parking'] ?? 0}';
 
-        hasSavedReading = data['isSaved'] == true;
+        hasSavedReading = data['electricNew'] != null &&
+            data['waterNew'] != null;
+      } else {
+        electricOldController.text = '0';
+        electricNewController.clear();
+        waterOldController.text = '0';
+        waterNewController.clear();
+        parkingController.text = '0';
+
+        hasSavedReading = false;
       }
     } catch (e) {
-      if (!mounted) return;
-      loadError = 'Không tải được dữ liệu Firebase: $e';
+      if (!mounted || room != selectedRoom) return;
+
+      setState(() {
+        loadError = 'Không tải được dữ liệu Firebase: $e';
+      });
     } finally {
-      if (mounted) {
+      if (mounted && room == selectedRoom) {
         setState(() {
           isLoading = false;
         });
@@ -137,6 +247,11 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
 
   Future<void> saveReading() async {
     if (isSaving) return;
+
+    if (room == null) {
+      showMessage('Vui lòng chọn phòng trước khi lưu.');
+      return;
+    }
 
     if (electricNewController.text.trim().isEmpty ||
         waterNewController.text.trim().isEmpty) {
@@ -162,7 +277,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
 
     try {
       await readingService.saveReading(
-        room: room,
+        room: room!,
         month: month,
         electricOld: electricOld,
         electricNew: electricNew,
@@ -170,7 +285,6 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
         waterNew: waterNew,
         electricPrice: electricPrice.toInt(),
         waterPrice: waterPrice.toInt(),
-        
       );
 
       if (!mounted) return;
@@ -206,6 +320,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
 
   @override
   void dispose() {
+    roomSubscription?.cancel();
     electricOldController.dispose();
     electricNewController.dispose();
     waterOldController.dispose();
@@ -370,7 +485,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                     buildInput(
                       controller: oldController,
                       unit: unit,
-                      editable: false,
+                      editable: true,
                     ),
                   ],
                 ),
@@ -778,7 +893,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Container(
-                        height: 42,
+                        height: 62,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
                           color: Colors.white,
@@ -798,13 +913,59 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                                       color: Color(0xFF8993A3),
                                     ),
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    room,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF343B49),
+                                  SizedBox(
+                                    height: 32,
+                                    child: DropdownButton<String>(
+                                      value: room != null &&
+                                              rooms.any(
+                                                (r) => r['name'] == room,
+                                              )
+                                          ? room
+                                          : null,
+                                      isExpanded: true,
+                                      isDense: true,
+                                      underline: const SizedBox(),
+                                      iconSize: 18,
+                                      hint: const Text(
+                                        'Chọn phòng',
+                                        style: TextStyle(fontSize: 11),
+                                      ),
+                                      items: rooms.map((r) {
+                                        return DropdownMenuItem<String>(
+                                          value: r['name'],
+                                          child: Text(
+                                            r['name']!,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(0xFF343B49),
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                      onChanged: isLoading ||
+                                              isSaving ||
+                                              rooms.isEmpty
+                                          ? null
+                                          : (value) async {
+                                              if (value == null ||
+                                                  value == room) {
+                                                return;
+                                              }
+
+                                              setState(() {
+                                                room = value;
+                                                isLoading = true;
+                                                hasSavedReading = false;
+                                                electricOldController.text = '0';
+                                                electricNewController.clear();
+                                                waterOldController.text = '0';
+                                                waterNewController.clear();
+                                                parkingController.text = '0';
+                                              });
+
+                                              await loadReading();
+                                            },
                                     ),
                                   ),
                                 ],
@@ -821,7 +982,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                                     color: Color(0xFF8993A3),
                                   ),
                                 ),
-                                const SizedBox(height: 2),
+                                const SizedBox(height: 4),
                                 Text(
                                   month,
                                   style: const TextStyle(
@@ -847,7 +1008,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                         priceText: '3.500đ/kWh',
                         oldController: electricOldController,
                         newController: electricNewController,
-                        highlighted: true,
+                        highlighted: false,
                       ),
                       const SizedBox(height: 10),
                       buildMeterCard(
@@ -866,7 +1027,7 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                       const SizedBox(height: 10),
                       buildFixedService(
                         title: 'WiFi',
-                        subtitle: 'Theo phòng · 100.000đ/tháng',
+                        subtitle: 'Theo phòng · 101.000đ/tháng',
                         icon: '⌁',
                         color: const Color(0xFF6046D8),
                         total: wifiTotal,
@@ -885,7 +1046,9 @@ class _MeterReadingScreenState extends State<MeterReadingScreen> {
                       SizedBox(
                         height: 43,
                         child: ElevatedButton(
-                          onPressed: isLoading || isSaving
+                          onPressed: isLoading ||
+                                  isSaving ||
+                                  room == null
                               ? null
                               : saveReading,
                           style: ElevatedButton.styleFrom(

@@ -1,4 +1,3 @@
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -10,8 +9,9 @@ class MeterReadingService {
   String _getDocumentId({
     required String room,
     required String month,
+    String? roomId,
   }) {
-    final safeRoom = room.replaceAll('/', '_');
+    final safeRoom = (roomId != null && roomId.isNotEmpty ? roomId : room).replaceAll('/', '_');
     final safeMonth = month.replaceAll('/', '_');
     return '${safeRoom}_$safeMonth';
   }
@@ -19,11 +19,20 @@ class MeterReadingService {
   Future<Map<String, dynamic>?> getReading({
     required String room,
     required String month,
+    String? roomId,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) {
       throw StateError('Bạn cần đăng nhập trước.');
     }
 
+    // Thử tìm theo roomId trước (nếu có)
+    if (roomId != null && roomId.isNotEmpty) {
+      final docId = _getDocumentId(room: room, month: month, roomId: roomId);
+      final snap = await _firestore.collection(collectionName).doc(docId).get();
+      if (snap.exists) return snap.data();
+    }
+
+    // Fallback tìm theo tên phòng
     final documentId = _getDocumentId(
       room: room,
       month: month,
@@ -50,8 +59,10 @@ class MeterReadingService {
     required int waterNew,
     int electricPrice = 3500,
     int waterPrice = 20000,
+    String? roomId,
   }) async {
-    if (FirebaseAuth.instance.currentUser == null) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (currentUid.isEmpty) {
       throw StateError('Bạn cần đăng nhập trước.');
     }
 
@@ -70,6 +81,7 @@ class MeterReadingService {
     final documentId = _getDocumentId(
       room: room,
       month: month,
+      roomId: roomId,
     );
 
     await _firestore
@@ -77,6 +89,10 @@ class MeterReadingService {
         .doc(documentId)
         .set({
       'room': room,
+      'roomId': roomId ?? room,
+      'id_room': roomId ?? room,
+      'ownerId': currentUid,
+      'owner_room': currentUid,
       'month': month,
       'previous': electricOld,
       'current': electricNew,

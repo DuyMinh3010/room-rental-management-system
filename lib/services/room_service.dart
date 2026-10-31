@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -17,8 +16,19 @@ class RoomService {
 
   Stream<List<Map<String, String>>> watchRooms() =>
       _rooms.snapshots().map((snapshot) {
+        final currentUid = FirebaseAuth.instance.currentUser?.uid;
+
         final rooms = snapshot.docs
             .map((doc) => _toUi(doc.id, doc.data()))
+            .where((r) {
+              // Phân quyền theo ownerId / owner_room để không bị lẫn phòng giữa các chủ trọ
+              final owner = r['ownerId'];
+              if (currentUid != null && owner != null && owner.isNotEmpty && owner != 'Chưa cập nhật') {
+                return owner == currentUid;
+              }
+              // Hỗ trợ phòng cũ chưa có ownerId để tránh mất dữ liệu demo
+              return true;
+            })
             .toList();
 
         rooms.sort((a, b) => a['name']!.compareTo(b['name']!));
@@ -36,18 +46,22 @@ class RoomService {
           );
 
   Future<void> save(Map<String, String> room, {String? id}) async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+
     final data = <String, dynamic>{
       'name': room['name']!.trim(),
       'status': room['status'],
       'price': _integer(room['price']),
       'deposit': _integer(room['deposit']),
       'area': double.parse(
-        room['area']!.replaceAll('m²', '').trim(),
+        room['area']!.replaceAll('m²', '').replaceAll('m2', '').trim(),
       ),
       'people': _integer(room['people']),
       'billingDay': room['billingDay']!,
       'zone': room['zone'] ?? '',
       'description': room['description'] ?? '',
+      'ownerId': currentUid,
+      'owner_room': currentUid, // Định danh chủ phòng để không bị trùng phòng
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -71,13 +85,6 @@ class RoomService {
         RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
         (m) => '${m[1]}.',
       );
-
-  static String _textValue(dynamic value, String fallback) {
-    if (value == null || value == '') return fallback;
-    if (value is String) return value;
-    if (value is num) return value.toString();
-    return fallback;
-  }
 
   static List<String> _stringList(dynamic value) {
     if (value == null || value is! List) return [];
@@ -119,9 +126,7 @@ class RoomService {
       if (value is String) return value;
       if (value is num) return value.toString();
 
-      throw FormatException(
-        'Phòng $id: trường $field không đúng kiểu dữ liệu.',
-      );
+      return value.toString();
     }
 
     num? number(String field) {
@@ -135,13 +140,7 @@ class RoomService {
               ? num.tryParse(value.trim().replaceAll(',', ''))
               : null;
 
-      if (result == null || !result.isFinite) {
-        throw FormatException(
-          'Phòng $id: trường $field phải là số.',
-        );
-      }
-
-      return result;
+      return (result != null && result.isFinite) ? result : null;
     }
 
     String moneyField(String field, String suffix) {
@@ -152,6 +151,7 @@ class RoomService {
     final area = number('area');
     final people = number('people');
     final day = data['billingDay'];
+    final rawPriceNum = number('price')?.toInt() ?? 0;
 
     String billingDay;
 
@@ -174,12 +174,14 @@ class RoomService {
       'name': text('name'),
       'status': text('status'),
       'price': moneyField('price', 'đ/tháng'),
+      'rawPrice': '$rawPriceNum',
       'deposit': moneyField('deposit', 'đ'),
       'area': area == null ? missing : '${area}m²',
       'people': people == null ? missing : '${people.toInt()} người',
       'billingDay': billingDay,
       'zone': text('zone'),
       'description': text('description'),
+      'ownerId': text('ownerId'),
       'services': jsonEncode(_stringList(data['services'])),
       'imageUrls': jsonEncode(_stringList(data['imageUrls'])),
     };

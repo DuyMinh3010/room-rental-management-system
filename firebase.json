@@ -1,1 +1,24 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"quan-li-phong","appId":"1:744238998639:android:a99dfa7f656253ba46d99a","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"quan-li-phong","configurations":{"web":"1:744238998639:web:07fac23c3c961de846d99a"}}}}}}
+{
+  "firestore": {
+    "rules": "firebase/firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "quan-li-phong",
+          "appId": "1:744238998639:android:a99dfa7f656253ba46d99a",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "quan-li-phong",
+          "configurations": {
+            "web": "1:744238998639:web:07fac23c3c961de846d99a"
+          }
+        }
+      }
+    }
+  }
+}

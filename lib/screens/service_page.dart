@@ -1,6 +1,7 @@
-
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/meter_reading_service.dart';
+import '../services/room_service.dart';
 import 'meter_reading_screen.dart';
 
 class ServicePage extends StatefulWidget {
@@ -15,18 +16,18 @@ class _ServicePageState extends State<ServicePage> {
   final Color backgroundColor = const Color(0xFFF4F6FA);
   final TextEditingController searchController = TextEditingController();
   final MeterReadingService readingService = MeterReadingService();
+  final RoomService roomService = RoomService();
 
   int selectedTab = 0;
   int selectedBottom = 2;
 
   final String currentMonth = '09/2026';
 
-  final List<String> rooms = [
-    'P.101',
-    'P.102',
-    'P.103',
-    'P.104',
-  ];
+  List<Map<String, String>> rooms = [];
+  StreamSubscription<List<Map<String, String>>>? roomSubscription;
+
+  bool isLoadingRooms = true;
+  String? roomError;
 
   final Map<String, bool> savedRooms = {};
 
@@ -84,41 +85,117 @@ class _ServicePageState extends State<ServicePage> {
   }
 
   Future<void> _loadRoomStatuses() async {
-    for (final room in rooms) {
-      try {
-        final data = await readingService.getReading(
-          room: room,
-          month: currentMonth,
-        );
+    await roomSubscription?.cancel();
 
-        if (!mounted) return;
+    if (!mounted) return;
 
-        setState(() {
-          savedRooms[room] =
-              data != null && data['isSaved'] == true;
-        });
-      } catch (_) {
-        if (!mounted) return;
+    setState(() {
+      isLoadingRooms = true;
+      roomError = null;
+    });
 
-        setState(() {
-          savedRooms[room] = false;
-        });
-      }
+    try {
+      roomSubscription = roomService.watchRooms().listen(
+        (roomData) async {
+          if (!mounted) return;
+
+          final availableRooms = roomData.where((item) {
+            final name = item['name'];
+            return name != null &&
+                name.trim().isNotEmpty &&
+                name != 'Chưa cập nhật';
+          }).toList();
+
+          setState(() {
+            rooms = availableRooms;
+            isLoadingRooms = false;
+
+            savedRooms.removeWhere(
+              (name, _) => !availableRooms.any(
+                (item) => item['name'] == name,
+              ),
+            );
+          });
+
+          final statuses = <String, bool>{};
+
+          for (final item in availableRooms) {
+            final name = item['name']!;
+
+            try {
+              final data = await readingService.getReading(
+                room: name,
+                month: currentMonth,
+              );
+
+              statuses[name] = data != null &&
+                  data['electricNew'] != null &&
+                  data['waterNew'] != null;
+            } catch (_) {
+              statuses[name] = false;
+            }
+          }
+
+          if (!mounted) return;
+
+          setState(() {
+            savedRooms
+              ..clear()
+              ..addAll(statuses);
+          });
+        },
+        onError: (Object error) {
+          if (!mounted) return;
+
+          setState(() {
+            roomError = 'Không tải được danh sách phòng: $error';
+            isLoadingRooms = false;
+          });
+        },
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        roomError = 'Không tải được danh sách phòng: $error';
+        isLoadingRooms = false;
+      });
     }
   }
 
-  Future<void> _openMeterReading(String room) async {
+  Future<void> _openMeterReading(String selectedRoom) async {
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => const MeterReadingScreen(),
+        builder: (_) => MeterReadingScreen(
+          initialRoom: selectedRoom,
+        ),
       ),
     );
 
     if (!mounted) return;
 
     if (result == true) {
-      await _loadRoomStatuses();
+      try {
+        final data = await readingService.getReading(
+          room: selectedRoom,
+          month: currentMonth,
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          savedRooms[selectedRoom] = data != null &&
+              data['electricNew'] != null &&
+              data['waterNew'] != null;
+        });
+      } catch (_) {
+        if (!mounted) return;
+
+        setState(() {
+          savedRooms[selectedRoom] = false;
+        });
+      }
     }
   }
 
@@ -149,227 +226,54 @@ class _ServicePageState extends State<ServicePage> {
         .trim();
   }
 
-  void editService(Map<String, dynamic> service) {
-    final nameController = TextEditingController(
-      text: service['name'].toString(),
-    );
-    final priceController = TextEditingController(
-      text: _getNumericPrice(service['price'].toString()),
-    );
-
-    String type = service['type'].toString();
-
-    showDialog<void>(
+  Future<void> editService(Map<String, dynamic> service) async {
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return AlertDialog(
-              title: Text('Sửa ${service['name']}'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Tên dịch vụ',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: priceController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Đơn giá',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      value: type,
-                      decoration: const InputDecoration(
-                        labelText: 'Loại tính phí',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'Theo phòng',
-                          child: Text('Theo phòng'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Theo người',
-                          child: Text('Theo người'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Theo chỉ số',
-                          child: Text('Theo chỉ số'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() => type = value);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Hủy'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    final name = nameController.text.trim();
-                    final price = double.tryParse(
-                      priceController.text.replaceAll('.', '').trim(),
-                    );
-
-                    if (name.isEmpty || price == null || price < 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Vui lòng nhập thông tin hợp lệ.'),
-                        ),
-                      );
-                      return;
-                    }
-
-                    setState(() {
-                      service['name'] = name;
-                      service['price'] =
-                          '${price.toInt()}${_getPriceSuffix(name)}';
-                      service['type'] = type;
-                    });
-
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('Lưu'),
-                ),
-              ],
-            );
-          },
+        return ServiceEditorDialog(
+          service: service,
+          isEditing: true,
         );
       },
-    ).whenComplete(() {
-      nameController.dispose();
-      priceController.dispose();
+    );
+
+    if (!mounted || result == null) return;
+
+    setState(() {
+      service['name'] = result['name'];
+      service['price'] =
+          '${result['price']}${_getPriceSuffix(result['name'].toString())}';
+      service['type'] = result['type'];
     });
   }
 
-  void addService() {
-    final nameController = TextEditingController();
-    final priceController = TextEditingController();
-    String type = 'Theo phòng';
-
-    showDialog<void>(
+  Future<void> addService() async {
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return AlertDialog(
-              title: const Text('Thêm dịch vụ'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Tên dịch vụ',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: priceController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Đơn giá',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      value: type,
-                      decoration: const InputDecoration(
-                        labelText: 'Loại tính phí',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'Theo phòng',
-                          child: Text('Theo phòng'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Theo người',
-                          child: Text('Theo người'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Theo chỉ số',
-                          child: Text('Theo chỉ số'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() => type = value);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Hủy'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    final name = nameController.text.trim();
-                    final price = double.tryParse(
-                      priceController.text.replaceAll('.', '').trim(),
-                    );
-
-                    if (name.isEmpty || price == null || price < 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Vui lòng nhập thông tin hợp lệ.'),
-                        ),
-                      );
-                      return;
-                    }
-
-                    setState(() {
-                      services.add({
-                        'name': name,
-                        'price':
-                            '${price.toInt()}${_getPriceSuffix(name)}',
-                        'type': type,
-                        'icon': Icons.miscellaneous_services,
-                        'color': primaryColor,
-                      });
-                    });
-
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('Lưu'),
-                ),
-              ],
-            );
-          },
+        return const ServiceEditorDialog(
+          isEditing: false,
         );
       },
-    ).whenComplete(() {
-      nameController.dispose();
-      priceController.dispose();
+    );
+
+    if (!mounted || result == null) return;
+
+    setState(() {
+      services.add({
+        'name': result['name'],
+        'price':
+            '${result['price']}${_getPriceSuffix(result['name'].toString())}',
+        'type': result['type'],
+        'icon': Icons.miscellaneous_services,
+        'color': primaryColor,
+      });
     });
   }
 
   @override
   void dispose() {
+    roomSubscription?.cancel();
     searchController.dispose();
     super.dispose();
   }
@@ -406,7 +310,6 @@ class _ServicePageState extends State<ServicePage> {
                 ],
               ),
             ),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: SizedBox(
@@ -445,9 +348,7 @@ class _ServicePageState extends State<ServicePage> {
                 ),
               ),
             ),
-
             const SizedBox(height: 10),
-
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Container(
@@ -465,15 +366,12 @@ class _ServicePageState extends State<ServicePage> {
                 ),
               ),
             ),
-
             const SizedBox(height: 12),
-
             Expanded(
               child: selectedTab == 0
                   ? _buildServiceList()
                   : _buildMeterList(),
             ),
-
             if (selectedTab == 0)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
@@ -507,7 +405,9 @@ class _ServicePageState extends State<ServicePage> {
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: () => _openMeterReading(rooms.first),
+                    onPressed: rooms.isEmpty || isLoadingRooms
+                        ? null
+                        : () => _openMeterReading(rooms.first['name']!),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryColor,
                       foregroundColor: Colors.white,
@@ -602,9 +502,7 @@ class _ServicePageState extends State<ServicePage> {
                         size: 20,
                       ),
                     ),
-
                     const SizedBox(width: 10),
-
                     Expanded(
                       flex: 5,
                       child: Column(
@@ -634,9 +532,7 @@ class _ServicePageState extends State<ServicePage> {
                         ],
                       ),
                     ),
-
                     const SizedBox(width: 5),
-
                     Expanded(
                       flex: 4,
                       child: Text(
@@ -651,9 +547,7 @@ class _ServicePageState extends State<ServicePage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(width: 5),
-
                     const Icon(
                       Icons.chevron_right,
                       size: 21,
@@ -670,6 +564,39 @@ class _ServicePageState extends State<ServicePage> {
   }
 
   Widget _buildMeterList() {
+    if (isLoadingRooms) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (roomError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            roomError!,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.red,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (rooms.isEmpty) {
+      return const Center(
+        child: Text(
+          'Chưa có phòng trong Firebase.',
+          style: TextStyle(
+            fontSize: 12,
+            color: Color(0xFF8491A4),
+          ),
+        ),
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 14),
       children: [
@@ -699,13 +626,14 @@ class _ServicePageState extends State<ServicePage> {
                 ),
               ),
               const SizedBox(height: 8),
-              ...rooms.map((room) {
-                final saved = savedRooms[room] == true;
+              ...rooms.map((roomData) {
+                final roomName = roomData['name']!;
+                final saved = savedRooms[roomName] == true;
 
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(
-                    room,
+                    roomName,
                     style: const TextStyle(fontSize: 13),
                   ),
                   subtitle: Text(
@@ -722,7 +650,7 @@ class _ServicePageState extends State<ServicePage> {
                     color: saved ? Colors.green : primaryColor,
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _openMeterReading(room),
+                  onTap: () => _openMeterReading(roomName),
                 );
               }),
             ],
@@ -802,6 +730,157 @@ class _ServicePageState extends State<ServicePage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class ServiceEditorDialog extends StatefulWidget {
+  final Map<String, dynamic>? service;
+  final bool isEditing;
+
+  const ServiceEditorDialog({
+    super.key,
+    this.service,
+    required this.isEditing,
+  });
+
+  @override
+  State<ServiceEditorDialog> createState() => _ServiceEditorDialogState();
+}
+
+class _ServiceEditorDialogState extends State<ServiceEditorDialog> {
+  late final TextEditingController nameController;
+  late final TextEditingController priceController;
+
+  late String type;
+
+  String _getNumericPrice(String price) {
+    return price
+        .replaceAll('đ', '')
+        .replaceAll('/kWh', '')
+        .replaceAll('/m³', '')
+        .replaceAll('/tháng', '')
+        .replaceAll('/người', '')
+        .replaceAll('.', '')
+        .trim();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    final service = widget.service;
+
+    nameController = TextEditingController(
+      text: service?['name']?.toString() ?? '',
+    );
+
+    priceController = TextEditingController(
+      text: _getNumericPrice(
+        service?['price']?.toString() ?? '',
+      ),
+    );
+
+    type = service?['type']?.toString() ?? 'Theo phòng';
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    priceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        widget.isEditing
+            ? 'Sửa ${widget.service?['name'] ?? 'dịch vụ'}'
+            : 'Thêm dịch vụ',
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Tên dịch vụ',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: priceController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Đơn giá',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: type,
+              decoration: const InputDecoration(
+                labelText: 'Loại tính phí',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'Theo phòng',
+                  child: Text('Theo phòng'),
+                ),
+                DropdownMenuItem(
+                  value: 'Theo người',
+                  child: Text('Theo người'),
+                ),
+                DropdownMenuItem(
+                  value: 'Theo chỉ số',
+                  child: Text('Theo chỉ số'),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    type = value;
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            final name = nameController.text.trim();
+            final price = double.tryParse(
+              priceController.text.replaceAll('.', '').trim(),
+            );
+
+            if (name.isEmpty || price == null || price < 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Vui lòng nhập thông tin hợp lệ.'),
+                ),
+              );
+              return;
+            }
+
+            Navigator.pop(context, {
+              'name': name,
+              'price': price.toInt(),
+              'type': type,
+            });
+          },
+          child: Text(widget.isEditing ? 'Lưu' : 'Thêm'),
+        ),
+      ],
     );
   }
 }
