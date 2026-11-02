@@ -1,267 +1,540 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../data/mock_data.dart';
-import '../widgets/form_widgets.dart';
-import 'room_page.dart';
-import 'login_page.dart';
-import 'tenant_detail_page.dart';
+import '../widgets/common.dart';
+import 'notification_page.dart';
 
-class AccountPage extends StatefulWidget {
+class AccountPage extends StatelessWidget {
   const AccountPage({super.key});
+
   @override
-  State<AccountPage> createState() => _AccountPageState();
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: canvas,
+    appBar: AppBar(
+      backgroundColor: canvas,
+      title: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Tài khoản',
+            style: TextStyle(
+              color: ink,
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            'Thông tin cá nhân & cài đặt',
+            style: TextStyle(
+              color: muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    ),
+    body: RecordsView(
+      collection: 'settings',
+      builder: (_, all) {
+        final settings = all.where((r) => r.id == 'landlord').firstOrNull;
+        final userEmail =
+            FirebaseAuth.instance.currentUser?.email ?? 'Chưa cập nhật email';
+        final rawName = settings?.text('name') ?? '';
+        final displayName = rawName.isNotEmpty
+            ? rawName
+            : (FirebaseAuth.instance.currentUser?.displayName?.isNotEmpty ==
+                      true
+                  ? FirebaseAuth.instance.currentUser!.displayName!
+                  : 'Tài khoản chủ trọ');
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
+          children: [
+            // Profile card (Frame 6)
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              child: Row(
+                children: [
+                  initialAvatar(
+                    displayName,
+                    size: 58,
+                    solidBlue: false,
+                    twoLetters: true,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          displayName,
+                          style: const TextStyle(
+                            color: ink,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '$userEmail · Chủ trọ',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: muted, fontSize: 11.5),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEAF8EE),
+                                borderRadius: BorderRadius.circular(13),
+                              ),
+                              child: const Text(
+                                'Đang hoạt động',
+                                style: TextStyle(
+                                  color: Color(0xFF16A34A),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () async {
+                                  await Clipboard.setData(
+                                    ClipboardData(text: store.uid),
+                                  );
+                                  if (context.mounted) {
+                                    message(context, 'Đã sao chép UID');
+                                  }
+                                },
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 3,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.copy_outlined,
+                                        size: 13,
+                                        color: blue,
+                                      ),
+                                      SizedBox(width: 4),
+                                      Flexible(
+                                        child: Text(
+                                          'Copy UID',
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: blue,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Grouped menu rows (Frame 6)
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  _AccountMenuRow(
+                    title: 'Thông tin cá nhân',
+                    subtitle: 'Tên, số điện thoại, ngân hàng nhận tiền',
+                    onTap: () => openPage(context, const SettingsPage()),
+                  ),
+                  _AccountMenuRow(
+                    title: 'Hợp đồng & kiểm tra hóa đơn',
+                    subtitle: 'Chạy kiểm tra hóa đơn đến kỳ và quá hạn',
+                    onTap: () => perform(context, () async {
+                      final result = await store.command('runBilling');
+                      if (context.mounted) {
+                        message(
+                          context,
+                          'Mới: ${result['created']} · Đã có: ${result['existing']} · Chưa đủ dữ liệu: ${result['blocked']} · Nhắc quá hạn: ${result['late']}',
+                        );
+                      }
+                    }, 'Đã chạy kiểm tra; xem mục Thông báo để biết phòng thiếu dữ liệu'),
+                  ),
+                  _AccountMenuRow(
+                    title: 'Thông báo',
+                    subtitle: 'Cài đặt nhắc nhở & hộp thư hệ thống',
+                    onTap: () => openPage(context, const NotificationPage()),
+                  ),
+                  _AccountMenuRow(
+                    title: 'Bảo mật',
+                    subtitle: 'Đổi mật khẩu',
+                    onTap: () => openPage(context, const PasswordPage()),
+                  ),
+                  _AccountMenuRow(
+                    title: 'Đăng xuất',
+                    danger: true,
+                    showDivider: false,
+                    onTap: () async {
+                      await FirebaseAuth.instance.signOut();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
 }
 
-class _AccountPageState extends State<AccountPage> {
-  Future<void> _open(Widget page) async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-    if (mounted) setState(() {});
-  }
+class _AccountMenuRow extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final VoidCallback onTap;
+  final bool danger;
+  final bool showDivider;
 
-  Future<void> _logout() async {
-    await FirebaseAuth.instance.signOut();
-    roomList.clear();
-    if (!mounted) return;
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginPage()),
-      (_) => false,
-    );
-  }
+  const _AccountMenuRow({
+    required this.title,
+    required this.onTap,
+    this.subtitle,
+    this.danger = false,
+    this.showDivider = true,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: canvas,
-      appBar: AppBar(title: const Text('Tài khoản')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Container(
+      constraints: const BoxConstraints(minHeight: 68),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text(
-            'Thông tin cá nhân & cài đặt',
-            style: TextStyle(color: muted),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(16),
-            margin: const EdgeInsets.only(bottom: 24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
             child: Row(
               children: [
-                const CircleAvatar(
-                  radius: 28,
-                  backgroundColor: Color(0xFFEAF0FF),
-                  child: Text('NA', style: TextStyle(color: blue)),
-                ),
-                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        profile['name']!,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        title,
+                        style: TextStyle(
+                          color: danger ? const Color(0xFFDC2626) : ink,
+                          fontSize: 13.5,
+                          fontWeight: danger
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        profile['role']!,
-                        style: const TextStyle(color: muted, fontSize: 12),
-                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle!,
+                          style: const TextStyle(color: muted, fontSize: 11),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          Card(
-            color: Colors.white,
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: const Text('Thông tin cá nhân'),
-                  subtitle: const Text('Tên, số điện thoại, email'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(const PersonalInfoPage()),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.article_outlined),
-                  title: const Text('Hợp đồng & đặt cọc'),
-                  subtitle: const Text('Xem thông tin thuê phòng'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () =>
-                      _open(TenantDetailPage(tenant: tenantList.first)),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.notifications_outlined),
-                  title: const Text('Thông báo'),
-                  subtitle: const Text('Cài đặt nhắc nhở'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(const NotificationPage()),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.lock_outline),
-                  title: const Text('Bảo mật'),
-                  subtitle: const Text('Đổi mật khẩu'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(const SecurityPage()),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.logout, color: Colors.red),
-                  title: const Text('Đăng xuất'),
-                  onTap: _logout,
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 22,
+                  color: danger ? const Color(0xFFDC2626) : muted,
                 ),
               ],
             ),
           ),
-        ],
-      ),
-      bottomNavigationBar: const AppBottomBar(selected: 6),
-    );
-  }
-}
-
-class PersonalInfoPage extends StatefulWidget {
-  const PersonalInfoPage({super.key});
-  @override
-  State<PersonalInfoPage> createState() => _PersonalInfoPageState();
-}
-
-class _PersonalInfoPageState extends State<PersonalInfoPage> {
-  final formKey = GlobalKey<FormState>();
-  final name = TextEditingController(text: profile['name']);
-  final phone = TextEditingController(text: profile['phone']);
-  final email = TextEditingController(text: profile['email']);
-  @override
-  void dispose() {
-    name.dispose();
-    phone.dispose();
-    email.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    if (!formKey.currentState!.validate()) return;
-    profile.addAll({
-      'name': name.text.trim(),
-      'phone': phone.text.trim(),
-      'email': email.text.trim(),
-    });
-    Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Thông tin cá nhân')),
-    body: Form(
-      key: formKey,
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          FormInput('Họ và tên', name),
-          FormInput('Số điện thoại', phone),
-          FormInput('Email', email),
-          FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),
+          if (showDivider) const Divider(height: 1, color: line),
         ],
       ),
     ),
   );
 }
 
-// Lưu tùy chọn mẫu trong phiên chạy, chưa gửi thông báo thật.
-final notificationSettings = <String, bool>{
-  'Nhắc thanh toán': true,
-  'Hợp đồng sắp hết hạn': true,
-  'Cập nhật bảo trì': true,
-};
-
-class NotificationPage extends StatefulWidget {
-  const NotificationPage({super.key});
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
   @override
-  State<NotificationPage> createState() => _NotificationPageState();
+  State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _NotificationPageState extends State<NotificationPage> {
+class _SettingsPageState extends State<SettingsPage> {
+  bool? auto;
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Thông báo')),
-    body: ListView(
-      children: [
-        for (final key in notificationSettings.keys)
-          SwitchListTile(
-            title: Text(key),
-            value: notificationSettings[key]!,
-            onChanged: (v) => setState(() => notificationSettings[key] = v),
-          ),
-        const Padding(
-          padding: EdgeInsets.all(20),
-          child: Text(
-            'Tùy chọn giao diện mẫu, chưa kết nối hệ thống gửi thông báo.',
-          ),
+    backgroundColor: canvas,
+    appBar: AppBar(
+      backgroundColor: canvas,
+      leading: IconButton(
+        icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+        onPressed: () => Navigator.maybePop(context),
+      ),
+      titleSpacing: 0,
+      title: const Text(
+        'Thông tin cá nhân',
+        style: TextStyle(
+          color: ink,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
         ),
-      ],
+      ),
+    ),
+    body: RecordsView(
+      collection: 'settings',
+      builder: (_, all) {
+        final settings = all.where((r) => r.id == 'landlord').firstOrNull;
+        final enabled = auto ?? settings?.data['autoBilling'] == true;
+        return Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              child: SwitchListTile(
+                activeThumbColor: blue,
+                title: const Text(
+                  'Tạo hóa đơn đến kỳ khi mở app',
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Chỉ chạy khi chủ trọ mở app; không chạy khi app đóng',
+                  style: TextStyle(color: muted, fontSize: 11.5),
+                ),
+                value: enabled,
+                onChanged: (v) => setState(() => auto = v),
+              ),
+            ),
+            Expanded(
+              child: EditForm(
+                embedded: true,
+                title: 'Thông tin',
+                action: 'saveSettings',
+                id: 'landlord',
+                submitLabel: 'Lưu thông tin',
+                initial: settings?.data ?? const {},
+                fixed: {'autoBilling': enabled},
+                fields: const [
+                  FieldSpec('name', 'Họ tên chủ trọ'),
+                  FieldSpec('phone', 'Số điện thoại'),
+                  FieldSpec('address', 'Địa chỉ', required: false),
+                  FieldSpec('bankName', 'Tên ngân hàng', required: false),
+                  FieldSpec('bankAccount', 'Số tài khoản', required: false),
+                  FieldSpec('bankHolder', 'Tên chủ tài khoản', required: false),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     ),
   );
 }
 
-class SecurityPage extends StatefulWidget {
-  const SecurityPage({super.key});
+class PasswordPage extends StatefulWidget {
+  const PasswordPage({super.key});
   @override
-  State<SecurityPage> createState() => _SecurityPageState();
+  State<PasswordPage> createState() => _PasswordPageState();
 }
 
-class _SecurityPageState extends State<SecurityPage> {
-  final formKey = GlobalKey<FormState>();
-  final current = TextEditingController();
-  final password = TextEditingController();
-  final confirm = TextEditingController();
+class _PasswordPageState extends State<PasswordPage> {
+  final current = TextEditingController(),
+      password = TextEditingController(),
+      confirmPassword = TextEditingController();
+  bool hideCurrent = true, hideNew = true, hideConfirm = true;
+
   @override
   void dispose() {
     current.dispose();
     password.dispose();
-    confirm.dispose();
+    confirmPassword.dispose();
     super.dispose();
   }
 
-  void _save() {
-    if (!formKey.currentState!.validate()) return;
-    if (password.text.length < 6 || password.text != confirm.text) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Mật khẩu mới cần ít nhất 6 ký tự và xác nhận phải khớp',
-          ),
-        ),
-      );
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Thông tin hợp lệ. Bản mẫu chưa đổi mật khẩu trên máy chủ.',
-        ),
+  InputDecoration _pwdDecoration(
+    String hint,
+    bool hidden,
+    VoidCallback toggle,
+  ) => InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(color: muted, fontSize: 13),
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    suffixIcon: IconButton(
+      icon: Icon(
+        hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+        size: 19,
+        color: muted,
       ),
-    );
-  }
+      onPressed: toggle,
+    ),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: blue, width: 1.2),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Bảo mật')),
-    body: Form(
-      key: formKey,
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          FormInput('Mật khẩu hiện tại', current, password: true),
-          FormInput('Mật khẩu mới', password, password: true),
-          FormInput('Xác nhận mật khẩu mới', confirm, password: true),
-          FilledButton(onPressed: _save, child: const Text('Đổi mật khẩu')),
-        ],
+    backgroundColor: canvas,
+    appBar: AppBar(
+      backgroundColor: canvas,
+      leading: IconButton(
+        icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+        onPressed: () => Navigator.maybePop(context),
       ),
+      titleSpacing: 0,
+      title: const Text(
+        'Đổi mật khẩu',
+        style: TextStyle(
+          color: ink,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+    body: ListView(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+      children: [
+        const Text(
+          'Mật khẩu hiện tại *',
+          style: TextStyle(
+            color: ink,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: current,
+          obscureText: hideCurrent,
+          decoration: _pwdDecoration(
+            'Nhập mật khẩu hiện tại',
+            hideCurrent,
+            () => setState(() => hideCurrent = !hideCurrent),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'Mật khẩu mới *',
+          style: TextStyle(
+            color: ink,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: password,
+          obscureText: hideNew,
+          decoration: _pwdDecoration(
+            'Ít nhất 6 ký tự',
+            hideNew,
+            () => setState(() => hideNew = !hideNew),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'Xác nhận mật khẩu mới *',
+          style: TextStyle(
+            color: ink,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: confirmPassword,
+          obscureText: hideConfirm,
+          decoration: _pwdDecoration(
+            'Nhập lại mật khẩu mới',
+            hideConfirm,
+            () => setState(() => hideConfirm = !hideConfirm),
+          ),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          height: 50,
+          child: FilledButton(
+            onPressed: () {
+              if (password.text.length < 6 ||
+                  password.text != confirmPassword.text) {
+                message(context, 'Mật khẩu chưa đủ dài hoặc chưa khớp');
+                return;
+              }
+              perform(context, () async {
+                final user = FirebaseAuth.instance.currentUser!;
+                await user.reauthenticateWithCredential(
+                  EmailAuthProvider.credential(
+                    email: user.email!,
+                    password: current.text,
+                  ),
+                );
+                await user.updatePassword(password.text);
+              }, 'Đã đổi mật khẩu');
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: blue,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            child: const Text('Đổi mật khẩu'),
+          ),
+        ),
+      ],
     ),
   );
 }

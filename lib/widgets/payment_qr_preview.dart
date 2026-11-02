@@ -1,26 +1,35 @@
 import 'package:flutter/material.dart';
 
-// Khung QR của bản UI. Thay bằng ảnh QR thật khi kết nối thanh toán.
 class PaymentQrPreview extends StatelessWidget {
   final double size;
-  const PaymentQrPreview({super.key, this.size = 120});
+  final double outerPadding;
+  const PaymentQrPreview({
+    super.key,
+    this.size = 120,
+    this.outerPadding = 16,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: size,
-      height: size,
+      width: size + outerPadding * 2,
+      height: size + outerPadding * 2,
+      padding: EdgeInsets.all(outerPadding),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: const Color(0xFFE7EAF0)),
-        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.qr_code_2, size: size * 0.65, color: Colors.black87),
-          const Text('QR minh họa', style: TextStyle(fontSize: 10)),
-        ],
+      child: Image.asset(
+        'assets/images/payment_qr.png',
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, _, _) => Icon(
+          Icons.qr_code_2_rounded,
+          size: size * 0.85,
+          color: const Color(0xFF111827),
+        ),
       ),
     );
   }

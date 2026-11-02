@@ -1,95 +1,83 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/form_widgets.dart';
+import '../models/record.dart';
+import '../widgets/common.dart';
 
-class TenantEditPage extends StatefulWidget {
-  final Map<String, String> tenant;
-  const TenantEditPage({super.key, required this.tenant});
-  @override
-  State<TenantEditPage> createState() => _TenantEditPageState();
-}
-
-class _TenantEditPageState extends State<TenantEditPage> {
-  final formKey = GlobalKey<FormState>();
-  final fields = <String, TextEditingController>{};
-  final labels = const {
-    'name': 'Họ và tên',
-    'birthday': 'Ngày sinh',
-    'phone': 'Số điện thoại',
-    'email': 'Email',
-    'identity': 'CCCD/Passport',
-    'address': 'Quê quán',
-    'job': 'Nghề nghiệp',
-    'note': 'Ghi chú',
-  };
-  String gender = 'Nam';
-  String residence = 'Chưa đăng ký';
-  @override
-  void initState() {
-    super.initState();
-    for (final key in labels.keys) {
-      fields[key] = TextEditingController(text: widget.tenant[key] ?? '');
-    }
-    gender = widget.tenant['gender'] ?? 'Nam';
-    residence = widget.tenant['residence'] ?? 'Chưa đăng ký';
-  }
-
-  @override
-  void dispose() {
-    for (final c in fields.values) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _save() {
-    if (!formKey.currentState!.validate()) return;
-    final result = Map<String, String>.from(widget.tenant);
-    for (final key in fields.keys) {
-      result[key] = fields[key]!.text.trim();
-    }
-    result['gender'] = gender;
-    result['residence'] = residence;
-    Navigator.pop(context, result);
-  }
-
+class TenantEditPage extends StatelessWidget {
+  final Record? tenant;
+  const TenantEditPage({super.key, this.tenant});
   @override
   Widget build(BuildContext context) {
+    final isNew = tenant == null;
     return Scaffold(
-      appBar: AppBar(title: const Text('Chỉnh sửa người thuê')),
-      body: Form(
-        key: formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            for (final key in labels.keys)
-              FormInput(
-                labels[key]!,
-                fields[key]!,
-                requiredField: key == 'name' || key == 'phone',
-              ),
-            DropdownButtonFormField<String>(
-              value: gender,
-              decoration: const InputDecoration(labelText: 'Giới tính'),
-              items: [
-                'Nam',
-                'Nữ',
-                'Khác',
-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-              onChanged: (v) => setState(() => gender = v!),
+      backgroundColor: canvas,
+      appBar: AppBar(
+        backgroundColor: canvas,
+        leading: IconButton(
+          icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+          onPressed: () => Navigator.pop(context),
+        ),
+        titleSpacing: 0,
+        title: Text(
+          isNew ? 'Thêm người thuê' : 'Sửa người thuê',
+          style: const TextStyle(
+            color: ink,
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      body: RecordsView(
+        collection: 'rooms',
+        builder: (_, rs) => EditForm(
+          embedded: true,
+          title: isNew ? 'Thêm người thuê' : 'Sửa người thuê',
+          submitLabel: isNew ? 'Thêm người thuê' : 'Lưu thay đổi',
+          action: 'saveTenant',
+          id: tenant?.id,
+          initial: tenant?.data ?? const {},
+          fields: [
+            const FieldSpec('name', 'Họ và tên', hint: 'Nhập họ và tên'),
+            const FieldSpec('phone', 'Số điện thoại', hint: 'Nhập số điện thoại'),
+            const FieldSpec(
+              'email',
+              'Email',
+              hint: 'example@gmail.com',
+              required: false,
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: residence,
-              decoration: const InputDecoration(labelText: 'Tạm trú'),
-              items: [
-                'Chưa đăng ký',
-                'Đã đăng ký',
-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-              onChanged: (v) => setState(() => residence = v!),
+            const FieldSpec(
+              'identity',
+              'CCCD / Passport',
+              hint: 'Nhập số CCCD',
+              required: false,
             ),
-            const SizedBox(height: 24),
-            FilledButton(onPressed: _save, child: const Text('Lưu thay đổi')),
+            FieldSpec(
+              'roomId',
+              'Phòng đang ở',
+              required: false,
+              options: {
+                '': 'Chưa gán phòng',
+                for (final r in rs.where((r) => !r.archived)) r.id: r.name,
+              },
+            ),
+            const FieldSpec(
+              'birthday',
+              'Ngày sinh',
+              hint: 'VD: 24/08/2003',
+              required: false,
+            ),
+            const FieldSpec(
+              'address',
+              'Quê quán / Địa chỉ thường trú',
+              hint: 'Nhập địa chỉ',
+              required: false,
+            ),
+            const FieldSpec(
+              'note',
+              'Ghi chú',
+              hint: 'Ghi chú thêm...',
+              required: false,
+            ),
           ],
         ),
       ),

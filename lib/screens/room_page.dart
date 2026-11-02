@@ -1,21 +1,10 @@
-import 'dart:async';
-import '../services/room_service.dart';
-export '../services/room_service.dart' show roomList;
 import 'package:flutter/material.dart';
 
+import '../models/record.dart';
+import '../widgets/common.dart';
+import 'notification_page.dart';
 import 'room_detail_page.dart';
 import 'room_edit_page.dart';
-import 'service_page.dart';
-import 'tenant_list_page.dart';
-import 'invoice_page.dart';
-import 'maintenance_page.dart';
-import 'contract_page.dart';
-import 'account_page.dart';
-
-const blue = Color(0xFF2463F5);
-const ink = Color(0xFF172033);
-const muted = Color(0xFF61738E);
-const canvas = Color(0xFFF6F7F9);
 
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
@@ -24,399 +13,215 @@ class RoomPage extends StatefulWidget {
 }
 
 class _RoomPageState extends State<RoomPage> {
-  int filter = 0;
-  String query = '';
-  List<Map<String, String>> rooms = [];
-  final service = RoomService();
-  StreamSubscription<List<Map<String, String>>>? subscription;
-  bool loading = true;
-  bool saving = false;
-  String? error;
+  String query = '', filter = 'Tất cả';
 
   @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  void _load() {
-    subscription?.cancel();
-    setState(() { loading = true; error = null; rooms = []; });
-    try {
-      subscription = service.watchRooms().listen((value) {
-        if (!mounted) return;
-        setState(() { rooms = value; loading = false; error = null; });
-      }, onError: (Object e) {
-        if (!mounted) return;
-        setState(() { error = roomError(e); loading = false; rooms = []; roomList.clear(); });
-      });
-    } catch (e) {
-      error = roomError(e); loading = false;
-    }
-  }
-
-  void _msg(String message) =>
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
-  Future<void> _open(Map<String, String> room, {int tab = 0}) async {
-    await Navigator.push(context, MaterialPageRoute(
-      builder: (_) => RoomDetailPage(roomId: room['id']!, initialTab: tab),
-    ));
-  }
-
-  Future<void> _edit([Map<String, String>? room]) async {
-    final result = await Navigator.push<Map<String, String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => RoomEditPage(
-          room: room,
-          usedNames: rooms
-              .where((r) => r != room)
-              .map((r) => r['name']!)
-              .toList(),
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: canvas,
+    appBar: AppBar(
+      backgroundColor: canvas,
+      title: const Text(
+        'Danh sách phòng',
+        style: TextStyle(
+          color: ink,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
         ),
       ),
-    );
-    if (result == null || !mounted) return;
-    setState(() => saving = true);
-    try {
-      await service.save(result, id: room?['id']);
-      if (!mounted) return;
-      setState(() { filter = 0; query = ''; searchController.clear(); });
-      _msg('Đã lưu phòng ${result['name']} lên Firebase');
-    } catch (e) {
-      if (mounted) _msg(roomError(e));
-    } finally {
-      if (mounted) setState(() => saving = false);
-    }
-  }
-
-  final searchController = TextEditingController();
-
-  @override
-  void dispose() {
-    subscription?.cancel();
-    searchController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const statuses = ['Tất cả', 'Đang có người', 'Trống', 'Đang sửa'];
-    const labels = ['Tất cả', 'Đang cho thuê', 'Trống', 'Đang sửa'];
-    final shown = rooms
-        .where(
-          (r) =>
-              (filter == 0 || r['status'] == statuses[filter]) &&
-              r['name']!.toLowerCase().contains(query.trim().toLowerCase()),
-        )
-        .toList();
-    return Scaffold(
-      backgroundColor: canvas,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 16, 14, 20),
-                children: [
-                  Row(
+      actions: [
+        const NotificationButton(),
+        Center(
+          child: figmaPrimaryPillButton(
+            label: '+ Thêm',
+            onTap: () => openPage(context, const RoomEditPage()),
+          ),
+        ),
+        const SizedBox(width: 14),
+      ],
+    ),
+    body: RecordsView(
+      collection: 'rooms',
+      builder: (_, all) {
+        final rooms = all.where((r) => !r.archived).toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+        return RecordsView(
+          collection: 'contracts',
+          builder: (_, contracts) {
+            final day = DateTime.now()
+                .toUtc()
+                .add(const Duration(hours: 7))
+                .toIso8601String()
+                .substring(0, 10);
+            bool rented(Record room) => contracts.any(
+              (c) =>
+                  c.text('roomId') == room.id &&
+                  c.text('status') == 'active' &&
+                  c.text('startDate').compareTo(day) <= 0 &&
+                  c.text('endDate').compareTo(day) >= 0,
+            );
+            final shown = rooms
+                .where(
+                  (r) =>
+                      r.name.toLowerCase().contains(
+                        query.trim().toLowerCase(),
+                      ) &&
+                      (filter == 'Tất cả' ||
+                          filter == 'Đang thuê' &&
+                              r.condition != 'Đang sửa' &&
+                              rented(r) ||
+                          filter == 'Trống' &&
+                              r.condition != 'Đang sửa' &&
+                              !rented(r) ||
+                          filter == 'Tốt' && r.condition == 'Tốt' ||
+                          filter == 'Đang sửa' && r.condition == 'Đang sửa'),
+                )
+                .toList();
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
+              children: [
+                TextField(
+                  onChanged: (v) => setState(() => query = v),
+                  decoration: searchDecoration('Tìm kiếm phòng...'),
+                ),
+                const SizedBox(height: 10),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
                     children: [
-                      const Expanded(
-                        child: Text(
-                          'Danh sách phòng',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: ink,
+                      for (final item in const [
+                        ('Tất cả', 'Tất cả'),
+                        ('Đang thuê', 'Đang cho thuê'),
+                        ('Trống', 'Trống'),
+                        ('Đang sửa', 'Đang sửa'),
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 7),
+                          child: figmaFilterPill(
+                            label: item.$2,
+                            selected: filter == item.$1,
+                            onTap: () => setState(() => filter = item.$1),
                           ),
                         ),
-                      ),
-                      SizedBox(
-                        height: 26,
-                        child: FilledButton(
-                          onPressed: loading || saving || error != null ? null : () => _edit(),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: blue,
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
-                          ),
-                          child: const Text(
-                            '+ Thêm',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: searchController,
-                    onChanged: (v) => setState(() => query = v),
-                    style: const TextStyle(fontSize: 12),
-                    decoration: InputDecoration(
-                      hintText: 'Tìm kiếm phòng...',
-                      hintStyle: const TextStyle(color: muted, fontSize: 12),
-                      prefixIcon: const Icon(
-                        Icons.search,
-                        size: 15,
-                        color: muted,
-                      ),
-                      prefixIconConstraints: const BoxConstraints(minWidth: 28),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(13),
-                        borderSide: BorderSide.none,
-                      ),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 13),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: List.generate(
-                        4,
-                        (i) => Padding(
-                          padding: const EdgeInsets.only(right: 6),
+                ),
+                const SizedBox(height: 10),
+                if (shown.isEmpty)
+                  empty('Chưa có phòng hoặc không khớp bộ lọc'),
+                for (final r in shown)
+                  Builder(
+                    builder: (context) {
+                      final statusLabel = r.condition == 'Đang sửa'
+                          ? 'Đang sửa'
+                          : rented(r)
+                          ? 'Đang cho thuê'
+                          : 'Trống';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: line, width: 0.7),
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
                           child: InkWell(
-                            onTap: () => setState(() => filter = i),
-                            borderRadius: BorderRadius.circular(20),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 13,
-                                vertical: 7,
-                              ),
-                              decoration: BoxDecoration(
-                                color: filter == i ? blue : Colors.white,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                labels[i],
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: filter == i ? Colors.white : muted,
-                                ),
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: () => openPage(
+                              context,
+                              RoomDetailPage(roomId: r.id),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 62,
+                                    height: 80,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEAF0F7),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        const Text(
+                                          'PHÒNG',
+                                          style: TextStyle(
+                                            color: muted,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          child: Text(
+                                            r.name,
+                                            maxLines: 1,
+                                            style: const TextStyle(
+                                              color: ink,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        statusPill(
+                                          statusLabel,
+                                          customText: statusLabel,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          '${money(r.data['price'])}/tháng',
+                                          style: const TextStyle(
+                                            color: ink,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '${r.number('area') ?? '—'}m²  •  ${r.number('people') ?? 0} người',
+                                          style: const TextStyle(
+                                            color: muted,
+                                            fontSize: 11.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: muted,
+                                    size: 22,
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                  const SizedBox(height: 10),
-                  if (loading || saving) const LinearProgressIndicator(),
-                  if (error != null) ...[
-                    Text(error!, style: const TextStyle(color: Colors.red)),
-                    TextButton(onPressed: _load, child: const Text('Thử lại')),
-                  ],
-                  if (!loading && error == null && shown.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: Text('Không tìm thấy phòng')),
-                    ),
-                  ...shown.map(roomCard),
-                ],
-              ),
-            ),
-            const AppBottomBar(selected: 0),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget roomCard(Map<String, String> room) {
-    final status = room['status']!;
-    final rented = status == 'Đang có người';
-    final color = rented
-        ? const Color(0xFF00A344)
-        : status == 'Trống'
-        ? blue
-        : const Color(0xFFF26B13);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: InkWell(
-        onTap: () => _open(room),
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              Container(
-                width: 58,
-                height: 76,
-                padding: const EdgeInsets.only(left: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEAF0F7),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'PHÒNG',
-                      style: TextStyle(fontSize: 8, color: muted),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      room['name']!,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: ink,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: .07),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        rented ? 'Đang cho thuê' : status,
-                        style: TextStyle(fontSize: 9, color: color),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      room['price']!,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: ink,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${room['area']}  •  ${room['people']}',
-                      style: const TextStyle(fontSize: 10, color: muted),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right, size: 18, color: muted),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class AppBottomBar extends StatelessWidget {
-  final int selected;
-  final VoidCallback? onRooms;
-  final bool Function(int)? onSelected;
-  const AppBottomBar({
-    super.key,
-    required this.selected,
-    this.onRooms,
-    this.onSelected,
-  });
-
-  void _go(BuildContext context, int idx) {
-    if (onSelected?.call(idx) ?? false) return;
-    if (idx == 0 && onRooms != null) {
-      onRooms!();
-      return;
-    }
-    if (idx == selected) return;
-    final Widget? page = switch (idx) {
-      0 => const RoomPage(),
-      1 => const TenantListPage(),
-      2 => const ServicePage(),
-      3 => const InvoicePage(),
-      4 => const ContractPage(),
-      5 => const MaintenancePage(),
-      6 => const AccountPage(),
-      _ => null,
-    };
-    if (page == null) return;
-    Navigator.push<void>(context, MaterialPageRoute(builder: (_) => page));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const labels = [
-      'Phòng',
-      'Người thuê',
-      'Dịch vụ',
-      'Hóa đơn',
-      'Hợp đồng',
-      'Bảo trì',
-      'Tài khoản',
-    ];
-    const icons = [
-      Icons.home_outlined,
-      Icons.person_outline,
-      Icons.circle,
-      Icons.receipt_outlined,
-      Icons.article_outlined,
-      Icons.handyman_outlined,
-      Icons.settings_outlined,
-    ];
-    return Container(
-      padding: const EdgeInsets.fromLTRB(4, 12, 4, 10),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE7EAF0))),
-      ),
-      child: Row(
-        children: List.generate(
-          7,
-          (i) => Expanded(
-            child: InkWell(
-              onTap: () => _go(context, i),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                decoration: BoxDecoration(
-                  color: selected == i ? const Color(0xFFEAF0FF) : null,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      icons[i],
-                      size: 15,
-                      color: selected == i ? blue : muted,
-                    ),
-                    const SizedBox(height: 4),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        labels[i],
-                        style: TextStyle(
-                          fontSize: 8,
-                          color: selected == i ? blue : muted,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+              ],
+            );
+          },
+        );
+      },
+    ),
+  );
 }

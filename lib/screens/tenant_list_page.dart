@@ -1,363 +1,234 @@
 import 'package:flutter/material.dart';
 
-import 'room_page.dart';
+import '../widgets/common.dart';
 import 'tenant_detail_page.dart';
-import '../data/mock_data.dart';
+import 'tenant_edit_page.dart';
 
 class TenantListPage extends StatefulWidget {
   const TenantListPage({super.key});
-
   @override
   State<TenantListPage> createState() => _TenantListPageState();
 }
 
 class _TenantListPageState extends State<TenantListPage> {
-  int selectedFilter = 0;
-  String searchText = "";
-
-  final tenants = tenantList;
-
-  List<Map<String, String>> get _shown {
-    const statuses = ['Tất cả', 'Trưởng phòng', 'Thành viên'];
-    final q = searchText.trim().toLowerCase();
-    return tenants.where((t) {
-      final match =
-          selectedFilter == 0 || t['memberRole'] == statuses[selectedFilter];
-      return match &&
-          [
-            'name',
-            'room',
-            'phone',
-          ].any((key) => (t[key] ?? '').toLowerCase().contains(q));
-    }).toList();
-  }
-
-  Future<void> _detail(String name) async {
-    final tenant = tenants.firstWhere((t) => t['name'] == name);
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => TenantDetailPage(tenant: tenant)),
-    );
-    if (mounted) setState(() {});
-  }
-
-  void _search() => FocusScope.of(context).unfocus();
+  String query = '';
+  String roleFilter = 'Tất cả';
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FC),
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: canvas,
+    appBar: AppBar(
+      backgroundColor: canvas,
+      title: const Text(
+        'Người thuê',
+        style: TextStyle(
+          color: ink,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      actions: [
+        Center(
+          child: figmaPrimaryPillButton(
+            label: '+ Thêm',
+            onTap: () => openPage(context, const TenantEditPage()),
+          ),
+        ),
+        const SizedBox(width: 14),
+      ],
+    ),
+    body: RecordsView(
+      collection: 'tenants',
+      builder: (_, all) => RecordsView(
+        collection: 'rooms',
+        builder: (_, rooms) => RecordsView(
+          collection: 'contracts',
+          builder: (_, contracts) {
+            final activeTenants = all.where((t) => !t.archived).toList();
+            final leaderIds = contracts
+                .where((c) => ['active', 'scheduled'].contains(c.text('status')))
+                .map((c) => c.text('tenantId'))
+                .toSet();
 
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 25),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            "Danh sách người thuê",
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF202533),
+            // Fallback: nếu phòng chưa có hợp đồng thì người đầu tiên của phòng là Trưởng phòng.
+            final firstInRoom = <String, String>{};
+            for (final t in activeTenants) {
+              final rid = t.text('roomId');
+              if (rid.isNotEmpty) {
+                firstInRoom.putIfAbsent(rid, () => t.id);
+              }
+            }
+
+            bool isLeader(String tenantId, String roomId) {
+              if (leaderIds.contains(tenantId)) return true;
+              if (roomId.isNotEmpty &&
+                  !contracts.any(
+                    (c) =>
+                        c.text('roomId') == roomId &&
+                        ['active', 'scheduled'].contains(c.text('status')),
+                  )) {
+                return firstInRoom[roomId] == tenantId;
+              }
+              return false;
+            }
+
+            final shown = activeTenants.where((t) {
+              final roomName =
+                  rooms.where((r) => r.id == t.text('roomId')).firstOrNull?.name ??
+                  '';
+              final matchQuery = '${t.name} ${t.text('phone')} $roomName'
+                  .toLowerCase()
+                  .contains(query.trim().toLowerCase());
+              if (!matchQuery) return false;
+              final leader = isLeader(t.id, t.text('roomId'));
+              if (roleFilter == 'Trưởng phòng') return leader;
+              if (roleFilter == 'Thành viên') return !leader;
+              return true;
+            }).toList();
+
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
+              children: [
+                TextField(
+                  decoration: searchDecoration(
+                    'Tìm kiếm theo tên, SĐT, Phòng',
+                  ),
+                  onChanged: (v) => setState(() => query = v),
+                ),
+                const SizedBox(height: 10),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final label in const [
+                        'Tất cả',
+                        'Trưởng phòng',
+                        'Thành viên',
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: figmaFilterPill(
+                            label: label,
+                            selected: roleFilter == label,
+                            onTap: () => setState(() => roleFilter = label),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (shown.isEmpty) empty('Chưa có người thuê'),
+                for (final t in shown)
+                  Builder(
+                    builder: (context) {
+                      final roomName =
+                          rooms
+                              .where((r) => r.id == t.text('roomId'))
+                              .firstOrNull
+                              ?.name ??
+                          'Chưa gán phòng';
+                      final leader = isLeader(t.id, t.text('roomId'));
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: line, width: 0.7),
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: () => openPage(
+                              context,
+                              TenantDetailPage(tenantId: t.id),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 13,
+                              ),
+                              child: Row(
+                                children: [
+                                  initialAvatar(t.name, size: 34),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          t.name,
+                                          style: const TextStyle(
+                                            color: ink,
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Row(
+                                          children: [
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 4,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: leader
+                                                    ? softBlue
+                                                    : const Color(0xFFECFDF3),
+                                                borderRadius:
+                                                    BorderRadius.circular(13),
+                                              ),
+                                              child: Text(
+                                                leader
+                                                    ? 'Trưởng phòng'
+                                                    : 'Thành viên',
+                                                style: TextStyle(
+                                                  color: leader
+                                                      ? blue
+                                                      : const Color(0xFF16A34A),
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                '$roomName  •  ${t.text('phone')}',
+                                                style: const TextStyle(
+                                                  color: muted,
+                                                  fontSize: 11,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: muted,
+                                    size: 20,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
-
-                        IconButton(
-                          onPressed: _search,
-                          icon: const Icon(
-                            Icons.search,
-                            color: Color(0xFF707582),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    TextField(
-                      onChanged: (value) {
-                        setState(() {
-                          searchText = value;
-                        });
-                      },
-                      decoration: InputDecoration(
-                        hintText: "Tìm kiếm tên, số phòng...",
-                        hintStyle: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                        prefixIcon: const Icon(
-                          Icons.search,
-                          size: 19,
-                          color: Colors.grey,
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Color(0xFFE4E5E9),
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(
-                            color: Color(0xFF2F67EA),
-                            width: 1.4,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 15),
-
-                    Wrap(
-                      spacing: 8,
-                      children: List.generate(
-                        3,
-                        (i) => _filterButton(
-                          index: i,
-                          text: ['Tất cả', 'Trưởng phòng', 'Thành viên'][i],
-                          selectedColor: blue,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 18),
-
-                    ..._shown.map(
-                      (tenant) => Padding(
-                        padding: const EdgeInsets.only(bottom: 11),
-                        child: _tenantCard(
-                          initial: tenant["initial"]!,
-                          name: tenant["name"]!,
-                          room: tenant["room"]!,
-                          phone: tenant["phone"]!,
-                          contract: tenant["contract"]!,
-                          status: tenant["status"]!,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 3),
-
-                    Text(
-                      "${_shown.length} người thuê",
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-
-      bottomNavigationBar: const AppBottomBar(selected: 1),
-    );
-  }
-
-  Widget _filterButton({
-    required int index,
-    required String text,
-    required Color selectedColor,
-  }) {
-    final bool isSelected = selectedFilter == index;
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          selectedFilter = index;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? selectedColor : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 11,
-            color: isSelected ? Colors.white : const Color(0xFF7E8390),
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _tenantCard({
-    required String initial,
-    required String name,
-    required String room,
-    required String phone,
-    required String contract,
-    required String status,
-  }) {
-    Color statusBackground;
-    Color statusText;
-
-    if (status == "Đang thuê") {
-      statusBackground = const Color(0xFFE7F8ED);
-      statusText = const Color(0xFF16A15D);
-    } else if (status == "Sắp hết hạn") {
-      statusBackground = const Color(0xFFFFF0DE);
-      statusText = const Color(0xFFE88623);
-    } else {
-      statusBackground = const Color(0xFFFFEAEA);
-      statusText = const Color(0xFFE74747);
-    }
-
-    return InkWell(
-      onTap: () {
-        _detail(name);
-      },
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-        ),
-
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: const BoxDecoration(
-                color: Color(0xFFEAF3FF),
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                initial,
-                style: const TextStyle(
-                  color: Color(0xFF4390E8),
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 12),
-
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF202533),
-                    ),
+                      );
+                    },
                   ),
-
-                  const SizedBox(height: 4),
-
-                  Text(
-                    room,
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.phone_outlined,
-                        size: 13,
-                        color: Colors.grey,
-                      ),
-
-                      const SizedBox(width: 5),
-
-                      Text(
-                        phone,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 4),
-
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.calendar_month_outlined,
-                        size: 13,
-                        color: Colors.grey,
-                      ),
-
-                      const SizedBox(width: 5),
-
-                      Expanded(
-                        child: Text(
-                          contract,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(width: 6),
-
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusBackground,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    status,
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600,
-                      color: statusText,
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 34),
-
-                const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
-    );
-  }
+    ),
+  );
 }
