@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/form_widgets.dart';
+import '../models/record.dart';
+import '../widgets/common.dart';
 import '../widgets/payment_qr_preview.dart';
-import 'room_page.dart';
-import '../utils/formatters.dart';
+import 'invoice_detail_page.dart';
+import 'invoice_page.dart';
 
 class InvoiceCreatePage extends StatefulWidget {
   const InvoiceCreatePage({super.key});
@@ -12,145 +13,539 @@ class InvoiceCreatePage extends StatefulWidget {
 }
 
 class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
-  final formKey = GlobalKey<FormState>();
-  final period = TextEditingController();
-  final rent = TextEditingController();
-  final electric = TextEditingController();
-  final water = TextEditingController();
-  final wifi = TextEditingController();
-  final trash = TextEditingController();
-  String? room;
-  String method = 'Chuyển khoản';
-  int get electricFee => (int.tryParse(electric.text) ?? 0) * 3500;
-  int get waterFee => (int.tryParse(water.text) ?? 0) * 20000;
-  int get total =>
-      (int.tryParse(rent.text) ?? 0) +
-      electricFee +
-      waterFee +
-      (int.tryParse(wifi.text) ?? 0) +
-      (int.tryParse(trash.text) ?? 0);
-  @override
-  void initState() {
-    super.initState();
-    for (final c in [rent, electric, water, wifi, trash]) {
-      c.addListener(_refresh);
+  String? roomId;
+  final period = periodOf();
+  Map<String, dynamic>? preview;
+  String? previewNote;
+  bool loadingPreview = false;
+  String paymentMethod = 'bank';
+
+  Future<void> _autoPreview(String? targetRoomId) async {
+    if (targetRoomId == null) return;
+    setState(() {
+      loadingPreview = true;
+      previewNote = null;
+    });
+    try {
+      final data = await store.command(
+        'previewInvoice',
+        args: {'roomId': targetRoomId, 'period': period},
+      );
+      if (mounted && roomId == targetRoomId) {
+        setState(() {
+          preview = data;
+          previewNote = null;
+        });
+      }
+    } catch (e) {
+      if (mounted && roomId == targetRoomId) {
+        setState(() {
+          preview = null;
+          previewNote = errorText(e);
+        });
+      }
+    } finally {
+      if (mounted && roomId == targetRoomId) {
+        setState(() => loadingPreview = false);
+      }
     }
   }
 
-  void _refresh() {
-    setState(() {});
-  }
-
-  @override
-  void dispose() {
-    for (final c in [period, rent, electric, water, wifi, trash]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _save() {
-    if (!formKey.currentState!.validate()) return;
-    if (room == null || room!.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Vui lòng chọn phòng.')));
+  Future<void> _preview() async {
+    if (roomId == null) {
+      message(context, 'Vui lòng chọn phòng trước');
       return;
     }
-    Navigator.pop(context, <String, String>{
-      'id': 'HD-${DateTime.now().millisecondsSinceEpoch}',
-      'room': room!,
-      'tenant': 'Chưa có người thuê',
-      'period': period.text.trim(),
-      'rent': rent.text,
-      'electric': '$electricFee',
-      'water': '$waterFee',
-      'wifi': wifi.text,
-      'trash': trash.text,
-      'price': money('$total'),
-      'status': 'Chưa thanh toán',
-      'method': method,
-    });
+    await perform(context, () async {
+      final data = await store.command(
+        'previewInvoice',
+        args: {'roomId': roomId, 'period': period},
+      );
+      if (mounted) {
+        setState(() {
+          preview = data;
+          previewNote = null;
+        });
+      }
+    }, 'Đã tính hóa đơn từ dữ liệu Firebase');
   }
 
+  Future<void> _issue() async {
+    if (roomId == null) {
+      message(context, 'Vui lòng chọn phòng cần tạo hóa đơn');
+      return;
+    }
+    if (!await confirm(
+      context,
+      'Phát hành hóa đơn và gửi vào hộp thư tài khoản người thuê đã liên kết?',
+    )) {
+      return;
+    }
+    if (!mounted) return;
+    await perform(context, () async {
+      final result = await store.command(
+        'issueInvoice',
+        args: {'roomId': roomId, 'period': period},
+      );
+      if (mounted) {
+        setState(() => preview = {...?preview, 'issuedId': result['id']});
+      }
+    }, 'Đã xử lý phát hành hóa đơn');
+    if (mounted && preview?['issuedId'] != null) {
+      await openPage(
+        context,
+        InvoiceDetailPage(invoiceId: preview!['issuedId'] as String),
+      );
+    }
+  }
+
+  Widget _sectionLabel(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 7),
+    child: Text(
+      text,
+      style: const TextStyle(
+        color: muted,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+  );
+
   @override
-  Widget build(BuildContext context) {
-    final names = roomList.map((r) => r['name']!).toList();
-    return Scaffold(
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: canvas,
+    appBar: AppBar(
       backgroundColor: canvas,
-      appBar: AppBar(title: const Text('Tạo hóa đơn')),
-      body: Form(
-        key: formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            DropdownButtonFormField<String>(
-              initialValue: room,
-              decoration: const InputDecoration(labelText: 'Phòng'),
-              items: names
-                  .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                  .toList(),
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() {
-                  room = v;
-                  rent.text = roomList
-                      .firstWhere((r) => r['name'] == v)['price']!
-                      .split('/')
-                      .first
-                      .replaceAll(RegExp(r'[^0-9]'), '');
-                });
-              },
-            ),
-            const SizedBox(height: 20),
-            FormInput('Kỳ thanh toán', period),
-            InfoCard(
-              title: 'Chi tiết',
-              children: [
-                FormInput('Tiền phòng (đ)', rent, number: true),
-                FormInput(
-                  'Điện tiêu thụ (kWh) · 3.500đ/kWh',
-                  electric,
-                  number: true,
-                ),
-                FormInput(
-                  'Nước tiêu thụ (m³) · 20.000đ/m³',
-                  water,
-                  number: true,
-                ),
-                FormInput('WiFi (đ)', wifi, number: true),
-                FormInput('Đổ rác (đ)', trash, number: true),
-                InfoLine('Tiền điện', money('$electricFee')),
-                InfoLine('Tiền nước', money('$waterFee')),
-                const Divider(),
-                InfoLine('Tổng cộng', money('$total')),
-              ],
-            ),
-            DropdownButtonFormField<String>(
-              value: method,
-              decoration: const InputDecoration(
-                labelText: 'Hình thức thanh toán',
-              ),
-              items: [
-                'Chuyển khoản',
-                'Tiền mặt',
-              ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-              onChanged: (v) => setState(() => method = v!),
-            ),
-            const SizedBox(height: 20),
-            if (method == 'Chuyển khoản') ...[
-              Center(child: const PaymentQrPreview(size: 110)),
-              const SizedBox(height: 10),
-              const Text(
-                'Khu vực hiển thị QR thanh toán',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: muted),
-              ),
-              const SizedBox(height: 20),
-            ],
-            FilledButton(onPressed: _save, child: const Text('Lưu hóa đơn')),
-          ],
+      leading: IconButton(
+        icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+        onPressed: () => Navigator.maybePop(context),
+      ),
+      titleSpacing: 0,
+      title: const Text(
+        'Tạo hóa đơn',
+        style: TextStyle(
+          color: ink,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
         ),
       ),
-    );
-  }
+    ),
+    body: RecordsView(
+      collection: 'rooms',
+      builder: (_, all) {
+        final activeRooms = all.where((r) => !r.archived).toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
+          children: [
+            _sectionLabel('Phòng'),
+            Container(
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: activeRooms.any((r) => r.id == roomId) ? roomId : null,
+                  hint: const Text(
+                    'Chọn phòng...',
+                    style: TextStyle(color: muted, fontSize: 12.5),
+                  ),
+                  isExpanded: true,
+                  dropdownColor: Colors.white,
+                  icon: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: muted,
+                    size: 20,
+                  ),
+                  style: const TextStyle(
+                    color: ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  items: [
+                    for (final r in activeRooms)
+                      DropdownMenuItem(value: r.id, child: Text(r.name)),
+                  ],
+                  onChanged: (v) {
+                    setState(() {
+                      roomId = v;
+                      preview = null;
+                      previewNote = null;
+                    });
+                    _autoPreview(v);
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            _sectionLabel('Kỳ thanh toán'),
+            Container(
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              alignment: Alignment.centerLeft,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      formatPeriodRange(period),
+                      style: const TextStyle(color: ink, fontSize: 12.5),
+                    ),
+                  ),
+                  Text(
+                    'Chỉ số: ${previousPeriod(period)}',
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            if (roomId != null) ...[
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Phụ phí phát sinh',
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () async {
+                      await openPage(
+                        context,
+                        EditForm(
+                          title: 'Thêm phụ phí · $period',
+                          action: 'saveExtra',
+                          submitLabel: 'Lưu phụ phí',
+                          fixed: {'roomId': roomId, 'period': period},
+                          fields: const [
+                            FieldSpec('reason', 'Ghi rõ vấn đề/lý do phụ phí'),
+                            FieldSpec(
+                              'amount',
+                              'Số tiền phụ phí (đ)',
+                              number: true,
+                              min: 1,
+                            ),
+                          ],
+                        ),
+                      );
+                      if (mounted) _autoPreview(roomId);
+                    },
+                    child: const Text(
+                      '+ Thêm phụ phí',
+                      style: TextStyle(
+                        color: blue,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              RecordsView(
+                collection: 'extras',
+                field: 'roomId',
+                equals: roomId,
+                builder: (_, xs) {
+                  final list = xs
+                      .where((x) => x.text('period') == period)
+                      .toList();
+                  if (list.isEmpty) return const SizedBox(height: 4);
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Column(
+                      children: [
+                        for (final x in list)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: line, width: 0.7),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    x.text('reason'),
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 12.5,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  money(x.data['amount']),
+                                  style: const TextStyle(
+                                    color: ink,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                InkWell(
+                                  onTap: () async {
+                                    await perform(
+                                      context,
+                                      () => store.command(
+                                        'deleteExtra',
+                                        id: x.id,
+                                      ),
+                                    );
+                                    if (mounted) _autoPreview(roomId);
+                                  },
+                                  child: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 17,
+                                    color: muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Chi tiết',
+                          style: TextStyle(
+                            color: ink,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (roomId != null)
+                        GestureDetector(
+                          onTap: _preview,
+                          child: const Text(
+                            'Tự tính lại',
+                            style: TextStyle(
+                              color: blue,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (roomId == null)
+                    const Text(
+                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch vụ từ dữ liệu Firebase.',
+                      style: TextStyle(color: muted, fontSize: 12),
+                    )
+                  else if (loadingPreview)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (preview == null)
+                    Text(
+                      previewNote ??
+                          'Bấm "Tự tính lại" để xem trước chi tiết hóa đơn.',
+                      style: const TextStyle(
+                        color: Color(0xFFD97706),
+                        fontSize: 12,
+                      ),
+                    )
+                  else ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Người thuê',
+                            style: TextStyle(color: muted, fontSize: 12),
+                          ),
+                          Text(
+                            '${preview!['tenantName']}',
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    for (final row in preview!['lines'] as List)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                row['quantity'] == 1
+                                    ? '${row['name']}'
+                                    : '${row['name']} (${row['quantity']} × ${money(row['unitPrice'])})',
+                                style: const TextStyle(
+                                  color: muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              money(row['amount']),
+                              style: const TextStyle(color: ink, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(height: 1, color: line),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Tổng cộng',
+                          style: TextStyle(
+                            color: ink,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          money(preview!['total']),
+                          style: const TextStyle(
+                            color: ink,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Hạn thanh toán',
+                          style: TextStyle(color: muted, fontSize: 11.5),
+                        ),
+                        Text(
+                          '${preview!['dueDate']}',
+                          style: const TextStyle(color: muted, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                    if (preview!['delivered'] != true) ...[
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Chưa liên kết tài khoản người thuê. Hóa đơn vẫn được tạo nhưng chưa gửi thông báo trực tiếp tới người thuê.',
+                        style: TextStyle(
+                          color: Color(0xFFD97706),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _sectionLabel('Hình thức thanh toán'),
+            Container(
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: paymentMethod,
+                  isExpanded: true,
+                  dropdownColor: Colors.white,
+                  icon: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: muted,
+                    size: 20,
+                  ),
+                  style: const TextStyle(color: ink, fontSize: 12.5),
+                  items: const [
+                    DropdownMenuItem(value: 'bank', child: Text('Chuyển khoản')),
+                    DropdownMenuItem(value: 'cash', child: Text('Tiền mặt')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => paymentMethod = v);
+                  },
+                ),
+              ),
+            ),
+            if (paymentMethod == 'bank') ...[
+              const SizedBox(height: 18),
+              const Center(
+                child: PaymentQrPreview(size: 110, outerPadding: 10),
+              ),
+              const SizedBox(height: 10),
+              const Center(
+                child: Text(
+                  'Quét mã QR để thanh toán',
+                  style: TextStyle(color: muted, fontSize: 11),
+                ),
+              ),
+            ],
+            const SizedBox(height: 22),
+            SizedBox(
+              height: 46,
+              child: FilledButton(
+                onPressed: roomId == null ? null : _issue,
+                style: FilledButton.styleFrom(
+                  backgroundColor: blue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                child: const Text('Lưu hóa đơn'),
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
 }

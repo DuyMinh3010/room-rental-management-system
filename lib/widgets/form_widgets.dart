@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-// Chỉ tách những phần lặp lại để mỗi màn hình dễ đọc hơn.
 class InfoCard extends StatelessWidget {
   final String title;
   final List<Widget> children;
@@ -12,14 +11,19 @@ class InfoCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: const TextStyle(
+              color: Color(0xFF111827),
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 12),
           ...children,
@@ -43,7 +47,7 @@ class InfoLine extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: Color(0xFF61738E), fontSize: 13),
+              style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
             ),
           ),
           const SizedBox(width: 12),
@@ -51,7 +55,11 @@ class InfoLine extends StatelessWidget {
             child: Text(
               value.isEmpty ? 'Chưa cập nhật' : value,
               textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                color: Color(0xFF111827),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -79,31 +87,71 @@ class FormInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: TextFormField(
-        controller: controller,
-        obscureText: password,
-        maxLines: lines,
-        keyboardType: number ? TextInputType.number : TextInputType.text,
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: RichText(
+              text: TextSpan(
+                text: label,
+                style: const TextStyle(
+                  color: Color(0xFF111827),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+                children: [
+                  if (requiredField)
+                    const TextSpan(
+                      text: ' *',
+                      style: TextStyle(color: Color(0xFFB60F0F)),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
-        validator: (value) {
-          final text = (value ?? '').trim();
-          if (requiredField && text.isEmpty) return 'Vui lòng nhập $label';
-          if (number &&
-              text.isNotEmpty &&
-              (int.tryParse(text) == null || int.parse(text) < 0)) {
-            return 'Vui lòng nhập số không âm';
-          }
-          return null;
-        },
+          TextFormField(
+            controller: controller,
+            obscureText: password,
+            maxLines: lines,
+            keyboardType: number ? TextInputType.number : TextInputType.text,
+            style: const TextStyle(color: Color(0xFF111827), fontSize: 13.5),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Color(0xFF2563EB),
+                  width: 1.4,
+                ),
+              ),
+            ),
+            validator: (value) {
+              final text = (value ?? '').trim();
+              if (requiredField && text.isEmpty) return 'Vui lòng nhập $label';
+              if (number &&
+                  text.isNotEmpty &&
+                  (int.tryParse(text) == null || int.parse(text) < 0)) {
+                return 'Vui lòng nhập số không âm';
+              }
+              return null;
+            },
+          ),
+        ],
       ),
     );
   }
