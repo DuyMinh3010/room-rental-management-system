@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/record.dart';
@@ -15,6 +16,12 @@ class AppStore {
     Object? equals,
   }) {
     Query<Map<String, dynamic>> query = db.collection(collection);
+    final tenantInbox =
+        field == 'recipientUid' &&
+        (collection == 'invoices' || collection == 'notifications');
+    if (!collection.startsWith('users/') && !tenantInbox) {
+      query = query.where('ownerId', isEqualTo: uid);
+    }
     if (field != null) query = query.where(field, isEqualTo: equals);
     return query.snapshots().map(
       (s) => s.docs.map((d) => Record(d.id, d.data())).toList(),
@@ -32,7 +39,15 @@ class AppStore {
     String? id,
     Map<String, dynamic>? data,
     Map<String, dynamic> args = const {},
-  }) => commands.command(action, key: id, d: data ?? {}, args: args);
+  }) async {
+    if (action == 'migrateOwnerData') {
+      final result = await FirebaseFunctions.instanceFor(
+        region: 'asia-southeast1',
+      ).httpsCallable('manage').call({'action': action});
+      return Map<String, dynamic>.from(result.data as Map);
+    }
+    return commands.command(action, key: id, d: data ?? {}, args: args);
+  }
 
   Future<void> reportPayment(String id, String note) =>
       commands.reportPayment(id, note);

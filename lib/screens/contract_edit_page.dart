@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/record.dart';
+import '../utils/validators.dart';
 import '../widgets/common.dart';
 
 String _normalizeDateInput(String raw) {
@@ -158,6 +159,15 @@ class _ContractEditPageState extends State<ContractEditPage> {
               : TextInputType.text,
           style: const TextStyle(color: ink, fontSize: 14),
           decoration: _boxDecoration(hint: label),
+          validator: (value) {
+            if (label == 'Số điện thoại') {
+              return validateVietnamesePhone(value, required: false);
+            }
+            if (label == 'Email') {
+              return validateEmail(value, required: false);
+            }
+            return validateIdentity(value);
+          },
         ),
       );
 

@@ -7,7 +7,22 @@ service cloud.firestore {
     }
 
     function manager() {
-      return signedIn();
+      return signedIn()
+        && exists(/databases/$(database)/documents/managers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/managers/$(request.auth.uid)).data.enabled == true;
+    }
+
+    function owns(data) {
+      return manager() && data.ownerId == request.auth.uid;
+    }
+
+    function createsOwned() {
+      return manager() && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    function updatesOwned() {
+      return owns(resource.data)
+        && request.resource.data.ownerId == request.auth.uid;
     }
 
     match /managers/{uid} {
@@ -16,8 +31,20 @@ service cloud.firestore {
     }
 
     match /rooms/{id} {
-      allow read: if manager();
-      allow create, update: if manager()
+      allow read: if owns(resource.data);
+      allow create: if createsOwned()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.condition in ['Tốt', 'Đang sửa']
+        && request.resource.data.price is number
+        && request.resource.data.price > 0
+        && request.resource.data.deposit is number
+        && request.resource.data.deposit >= 0
+        && request.resource.data.capacity is number
+        && request.resource.data.capacity >= 1
+        && request.resource.data.serviceIds is list
+        && request.resource.data.serviceIds.size() <= 30;
+      allow update: if updatesOwned()
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.condition in ['Tốt', 'Đang sửa']
@@ -32,20 +59,31 @@ service cloud.firestore {
     }
 
     match /tenants/{id} {
-      allow read, create, update: if manager();
+      allow read: if owns(resource.data);
+      allow create: if createsOwned();
+      allow update: if updatesOwned();
     }
 
     match /services/{id} {
-      allow read: if manager();
-      allow create, update: if manager()
+      allow read: if owns(resource.data);
+      allow create: if createsOwned()
+        && request.resource.data.mode in ['meter', 'room', 'person']
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0;
+      allow update: if updatesOwned()
         && request.resource.data.mode in ['meter', 'room', 'person']
         && request.resource.data.price is number
         && request.resource.data.price >= 0;
     }
 
     match /meters/{id} {
-      allow read: if manager();
-      allow create, update: if manager()
+      allow read: if owns(resource.data);
+      allow create: if createsOwned()
+        && request.resource.data.previous is number
+        && request.resource.data.previous >= 0
+        && request.resource.data.current is number
+        && request.resource.data.current >= request.resource.data.previous;
+      allow update: if updatesOwned()
         && request.resource.data.previous is number
         && request.resource.data.previous >= 0
         && request.resource.data.current is number
@@ -53,8 +91,13 @@ service cloud.firestore {
     }
 
     match /contracts/{id} {
-      allow read: if manager();
-      allow create, update: if manager()
+      allow read: if owns(resource.data);
+      allow create: if createsOwned()
+        && request.resource.data.rent is number
+        && request.resource.data.rent > 0
+        && request.resource.data.deposit is number
+        && request.resource.data.deposit >= 0;
+      allow update: if updatesOwned()
         && request.resource.data.rent is number
         && request.resource.data.rent > 0
         && request.resource.data.deposit is number
@@ -62,8 +105,14 @@ service cloud.firestore {
     }
 
     match /extras/{id} {
-      allow read, delete: if manager();
-      allow create, update: if manager()
+      allow read: if owns(resource.data);
+      allow delete: if owns(resource.data);
+      allow create: if createsOwned()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0;
+      allow update: if updatesOwned()
         && request.resource.data.amount is number
         && request.resource.data.amount > 0
         && request.resource.data.reason is string
@@ -71,11 +120,15 @@ service cloud.firestore {
     }
 
     match /maintenance/{id} {
-      allow read, create, update: if manager();
+      allow read: if owns(resource.data);
+      allow create: if createsOwned();
+      allow update: if updatesOwned();
     }
 
     match /settings/{id} {
-      allow read, create, update: if manager();
+      allow read: if owns(resource.data) && id == request.auth.uid;
+      allow create: if createsOwned() && id == request.auth.uid;
+      allow update: if updatesOwned() && id == request.auth.uid;
     }
 
     match /system/revision {
@@ -83,10 +136,10 @@ service cloud.firestore {
     }
 
     match /invoices/{id} {
-      allow read: if manager()
+      allow read: if owns(resource.data)
         || (signedIn() && resource.data.recipientUid == request.auth.uid);
 
-      allow create: if manager()
+      allow create: if createsOwned()
         && request.resource.data.status == 'unpaid'
         && request.resource.data.total is number
         && request.resource.data.total > 0
@@ -94,7 +147,7 @@ service cloud.firestore {
         && request.resource.data.lines.size() > 0;
 
       allow update: if (
-        manager()
+        updatesOwned()
         && request.resource.data.status in ['unpaid', 'reported', 'paid', 'void']
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
           'total',
@@ -106,7 +159,8 @@ service cloud.firestore {
           'roomId',
           'tenantId',
           'dueDate',
-          'issueDate'
+          'issueDate',
+          'ownerId'
         ])
       ) || (
         signedIn()
@@ -138,6 +192,7 @@ service cloud.firestore {
 
         return signedIn()
           && n.keys().hasOnly([
+            'ownerId',
             'title',
             'body',
             'audience',
@@ -147,6 +202,8 @@ service cloud.firestore {
           ])
           && id == 'reported_' + n.invoiceId
           && n.audience == 'managers'
+          && n.ownerId == before.ownerId
+          && after.ownerId == before.ownerId
           && n.title == 'Người thuê báo đã chuyển tiền'
           && n.body is string
           && n.body.size() <= 4000
@@ -159,20 +216,20 @@ service cloud.firestore {
       }
 
       allow read: if (
-        manager() && resource.data.audience == 'managers'
+        owns(resource.data) && resource.data.audience == 'managers'
       ) || (
         signedIn() && resource.data.get('recipientUid', '') == request.auth.uid
       );
 
       allow create: if (
-        manager()
+        createsOwned()
         && request.resource.data.audience in ['managers', 'tenant']
         && request.resource.data.title is string
         && request.resource.data.body is string
         && request.resource.data.createdAt == request.time
       ) || ownPaymentReport();
 
-      allow update: if manager()
+      allow update: if updatesOwned()
         && request.resource.data.audience in ['managers', 'tenant']
         && request.resource.data.title is string
         && request.resource.data.body is string

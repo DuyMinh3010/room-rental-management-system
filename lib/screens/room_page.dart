@@ -15,6 +15,21 @@ class RoomPage extends StatefulWidget {
 class _RoomPageState extends State<RoomPage> {
   String query = '', filter = 'Tất cả';
 
+  Future<void> _migrateLegacyData(BuildContext context) async {
+    if (!await confirm(
+      context,
+      'Gán các dữ liệu Firestore chưa có ownerId cho tài khoản chủ trọ đang đăng nhập? Chỉ tiếp tục nếu bạn là chủ sở hữu dữ liệu cũ.',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command('migrateOwnerData'),
+      'Đã khôi phục liên kết dữ liệu cũ. Danh sách phòng sẽ tự cập nhật.',
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: canvas,
@@ -22,11 +37,7 @@ class _RoomPageState extends State<RoomPage> {
       backgroundColor: canvas,
       title: const Text(
         'Danh sách phòng',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w600),
       ),
       actions: [
         const NotificationButton(),
@@ -106,8 +117,21 @@ class _RoomPageState extends State<RoomPage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                if (shown.isEmpty)
-                  empty('Chưa có phòng hoặc không khớp bộ lọc'),
+                if (shown.isEmpty) ...[
+                  empty(
+                    rooms.isEmpty
+                        ? 'Chưa tìm thấy phòng thuộc tài khoản này'
+                        : 'Không có phòng khớp bộ lọc',
+                  ),
+                  if (rooms.isEmpty)
+                    Center(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _migrateLegacyData(context),
+                        icon: const Icon(Icons.sync_rounded),
+                        label: const Text('Hiển thị dữ liệu phòng cũ'),
+                      ),
+                    ),
+                ],
                 for (final r in shown)
                   Builder(
                     builder: (context) {
@@ -127,10 +151,8 @@ class _RoomPageState extends State<RoomPage> {
                           color: Colors.transparent,
                           child: InkWell(
                             borderRadius: BorderRadius.circular(14),
-                            onTap: () => openPage(
-                              context,
-                              RoomDetailPage(roomId: r.id),
-                            ),
+                            onTap: () =>
+                                openPage(context, RoomDetailPage(roomId: r.id)),
                             child: Padding(
                               padding: const EdgeInsets.all(12),
                               child: Row(

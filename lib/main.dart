@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ Future<void> main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    await FirebaseAuth.instance.signOut();
 
     runApp(const MyApp());
   } catch (e) {
@@ -169,9 +171,7 @@ class MyApp extends StatelessWidget {
         builder: (context, auth) {
           if (auth.connectionState == ConnectionState.waiting) {
             return const Scaffold(
-              body: Center(
-                child: CircularProgressIndicator(),
-              ),
+              body: Center(child: CircularProgressIndicator()),
             );
           }
 
@@ -194,10 +194,32 @@ class MyApp extends StatelessWidget {
             return const LoginPage();
           }
 
-          // Bản đồ án: các tài khoản đăng nhập cùng quản lý dữ liệu.
-          return AppShell(
-            key: ValueKey(user.uid),
-            landlord: true,
+          return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            future: FirebaseFirestore.instance
+                .collection('managers')
+                .doc(user.uid)
+                .get(),
+            builder: (context, manager) {
+              if (manager.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (manager.hasError) {
+                return Scaffold(
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'Không kiểm tra được quyền tài khoản.\n${manager.error}',
+                      ),
+                    ),
+                  ),
+                );
+              }
+              final landlord = manager.data?.data()?['enabled'] == true;
+              return AppShell(key: ValueKey(user.uid), landlord: landlord);
+            },
           );
         },
       ),

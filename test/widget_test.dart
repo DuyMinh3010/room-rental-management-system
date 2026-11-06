@@ -17,4 +17,17 @@ void main() {
     expect(find.text('RRMS'), findsOneWidget);
     expect(find.text('Đăng nhập'), findsWidgets);
   });
+
+  testWidgets('login validation is shown under each field', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Vui lòng nhập email'), findsOneWidget);
+    expect(find.text('Vui lòng nhập mật khẩu'), findsOneWidget);
+  });
 }

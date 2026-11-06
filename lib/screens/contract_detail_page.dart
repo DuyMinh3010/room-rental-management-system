@@ -15,21 +15,6 @@ class ContractDetailPage extends StatelessWidget {
   final String contractId;
   const ContractDetailPage({super.key, required this.contractId});
 
-  void _openEditOrRenew(BuildContext context, Record c) {
-    if (c.text('status') == 'scheduled') {
-      openPage(context, ContractEditPage(contract: c));
-    } else {
-      openPage(
-        context,
-        ContractEditPage(
-          initialRoomId: c.text('roomId'),
-          initialTenantId: c.text('tenantId'),
-          initialTenantIds: c.strings('tenantIds'),
-        ),
-      );
-    }
-  }
-
   Widget _contactRow(IconData icon, String title, String value) => Row(
     children: [
       Container(
@@ -190,7 +175,8 @@ class ContractDetailPage extends StatelessWidget {
                   Center(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(20),
-                      onTap: () => _openEditOrRenew(context, c),
+                      onTap: () =>
+                          openPage(context, ContractEditPage(contract: c)),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 15,
@@ -201,7 +187,7 @@ class ContractDetailPage extends StatelessWidget {
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          status == 'scheduled' ? 'Chỉnh sửa' : 'Gia hạn',
+                          'Chỉnh sửa',
                           style: const TextStyle(
                             color: blue,
                             fontSize: 13.5,

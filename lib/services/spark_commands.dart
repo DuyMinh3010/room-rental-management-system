@@ -5,8 +5,7 @@ import 'billing.dart';
 
 typedef Data = Map<String, dynamic>;
 
-// Chỉ UID được cấp trong managers mới được ghi. Mọi chủ trọ trong bản này
-// cùng quản lý một nhà trọ. Không cho người thuê ghi các dữ liệu nghiệp vụ khác.
+// Each enabled manager owns an isolated set of records keyed by ownerId.
 class SparkCommands {
   final FirebaseFirestore db;
   SparkCommands(this.db);
@@ -33,13 +32,20 @@ class SparkCommands {
     return d;
   }
 
+  Data owned(Data? d, String label) {
+    final record = found(d, label);
+    if (record['ownerId'] != uid)
+      throw StateError('$label không thuộc tài khoản chủ trọ này');
+    return record;
+  }
+
   Future<Data?> read(Transaction tx, String c, String key) async {
     final s = await tx.get(ref(c, key));
     return s.exists ? {...s.data()!, '_id': s.id} : null;
   }
 
   Future<List<Data>> list(String c, {String? field, dynamic equals}) async {
-    Query<Data> q = db.collection(c);
+    Query<Data> q = db.collection(c).where('ownerId', isEqualTo: uid);
     if (field != null) q = q.where(field, isEqualTo: equals);
     return (await q.get(
       const GetOptions(source: Source.server),
@@ -53,13 +59,15 @@ class SparkCommands {
     String body, {
     String? recipient,
     String? invoiceId,
+    String? ownerId,
   }) {
     tx.set(ref('notifications', key), {
+      'ownerId': ownerId ?? uid,
       'title': title,
       'body': body,
       'audience': recipient == null ? 'managers' : 'tenant',
-      if (recipient != null) 'recipientUid': recipient,
-      if (invoiceId != null) 'invoiceId': invoiceId,
+      'recipientUid': ?recipient,
+      'invoiceId': ?invoiceId,
       'createdAt': stamp(),
       'delivery': 'in_app',
     });
@@ -98,6 +106,7 @@ class SparkCommands {
       final k = id(generated), now = Billing.today();
       if (action == 'saveRoom') {
         final old = await read(tx, 'rooms', k);
+        if (old != null) owned(old, 'Phòng');
         final name = text(d['name'], 'tên phòng');
         final rooms = await list('rooms');
         if (rooms.any(
@@ -124,6 +133,7 @@ class SparkCommands {
         final term = Billing.number(d['paymentTermDays'], 'Hạn thanh toán');
         if (term > 60) throw StateError('Hạn thanh toán tối đa 60 ngày');
         tx.set(ref('rooms', k), {
+          'ownerId': uid,
           'name': name,
           'condition': condition,
           'status': condition,
@@ -148,7 +158,7 @@ class SparkCommands {
           'updatedAt': stamp(),
         }, SetOptions(merge: true));
       } else if (action == 'archiveRoom') {
-        found(await read(tx, 'rooms', k), 'Phòng');
+        owned(await read(tx, 'rooms', k), 'Phòng');
         final ts = await list('tenants', field: 'roomId', equals: k),
             cs = await list('contracts', field: 'roomId', equals: k),
             bs = await list('invoices', field: 'roomId', equals: k);
@@ -161,16 +171,17 @@ class SparkCommands {
         tx.update(ref('rooms', k), {'archived': true, 'updatedAt': stamp()});
       } else if (action == 'saveTenant' || action == 'archiveTenant') {
         final old = await read(tx, 'tenants', k);
+        if (old != null) owned(old, 'Người thuê');
         final roomId = action == 'archiveTenant'
             ? ''
             : text(d['roomId'], 'phòng', optional: true);
         final oldRoom = '${old?['roomId'] ?? ''}';
         final room = roomId.isEmpty
             ? null
-            : found(await read(tx, 'rooms', id(roomId)), 'Phòng');
+            : owned(await read(tx, 'rooms', id(roomId)), 'Phòng');
         final previousRoom = oldRoom.isEmpty
             ? null
-            : await read(tx, 'rooms', oldRoom);
+            : owned(await read(tx, 'rooms', oldRoom), 'Phòng');
         final cs = oldRoom.isEmpty
             ? await list('contracts', field: 'tenantId', equals: k)
             : await list('contracts', field: 'roomId', equals: oldRoom);
@@ -195,12 +206,14 @@ class SparkCommands {
         if (action == 'archiveTenant') {
           found(old, 'Người thuê');
           tx.update(ref('tenants', k), {
+            'ownerId': uid,
             'archived': true,
             'roomId': '',
             'updatedAt': stamp(),
           });
         } else {
           tx.set(ref('tenants', k), {
+            'ownerId': uid,
             'name': text(d['name'], 'họ tên'),
             'phone': text(d['phone'], 'số điện thoại'),
             for (final f in [
@@ -224,7 +237,7 @@ class SparkCommands {
             'people': FieldValue.increment(-1),
           });
       } else if (action == 'linkTenantAccount') {
-        found(await read(tx, 'tenants', k), 'Người thuê');
+        owned(await read(tx, 'tenants', k), 'Người thuê');
         final authUid = id(args['authUid']);
         // Spark không thể tra UID người khác qua Auth client. Chủ trọ sao chép
         // UID chính xác từ Authentication > Users, không đưa Admin key vào app.
@@ -240,6 +253,7 @@ class SparkCommands {
           });
       } else if (action == 'saveService' || action == 'archiveService') {
         final old = await read(tx, 'services', k);
+        if (old != null) owned(old, 'Dịch vụ');
         final rooms = (await list('rooms')).where(
           (r) =>
               r['archived'] != true &&
@@ -260,6 +274,7 @@ class SparkCommands {
           if (old != null && old['mode'] != mode && rooms.isNotEmpty)
             throw StateError('Bỏ dịch vụ khỏi phòng trước khi đổi cách tính');
           tx.set(ref('services', k), {
+            'ownerId': uid,
             'name': text(d['name'], 'tên dịch vụ'),
             'mode': mode,
             'price': Billing.number(d['price'], 'Đơn giá'),
@@ -272,11 +287,11 @@ class SparkCommands {
         }
       } else if (action == 'assignServices') {
         final roomId = id(args['roomId']);
-        found(await read(tx, 'rooms', roomId), 'Phòng');
+        owned(await read(tx, 'rooms', roomId), 'Phòng');
         final ids = (args['serviceIds'] as List).map(id).toSet().toList();
         if (ids.length > 30) throw StateError('Tối đa 30 dịch vụ/phòng');
         for (final sid in ids)
-          found(await read(tx, 'services', sid), 'Dịch vụ');
+          owned(await read(tx, 'services', sid), 'Dịch vụ');
         tx.update(ref('rooms', roomId), {
           'serviceIds': ids,
           'updatedAt': stamp(),
@@ -285,8 +300,8 @@ class SparkCommands {
         final roomId = id(d['roomId']),
             sid = id(d['serviceId']),
             p = Billing.period(d['period']);
-        final room = found(await read(tx, 'rooms', roomId), 'Phòng'),
-            service = found(await read(tx, 'services', sid), 'Dịch vụ');
+        final room = owned(await read(tx, 'rooms', roomId), 'Phòng'),
+            service = owned(await read(tx, 'services', sid), 'Dịch vụ');
         if (service['mode'] != 'meter' ||
             !(room['serviceIds'] as List? ?? []).contains(sid))
           throw StateError('Chưa áp dụng dịch vụ chỉ số cho phòng');
@@ -304,6 +319,9 @@ class SparkCommands {
               'meters',
               '${roomId}_${sid}_${Billing.shift(p, 1)}',
             );
+        if (old != null) owned(old, 'Chỉ số');
+        if (prev != null) owned(prev, 'Chỉ số');
+        if (next != null) owned(next, 'Chỉ số');
         final bills = await list('invoices', field: 'roomId', equals: roomId);
         if (bills.any((b) => b['meterPeriod'] == p && b['status'] != 'void'))
           throw StateError('Kỳ này đã phát hành hóa đơn, không sửa chỉ số');
@@ -322,6 +340,7 @@ class SparkCommands {
         if (next != null && next['previous'] != current)
           throw StateError('Kỳ sau đã có chỉ số phụ thuộc');
         tx.set(ref('meters', meterId), {
+          'ownerId': uid,
           'roomId': roomId,
           'serviceId': sid,
           'period': p,
@@ -336,19 +355,20 @@ class SparkCommands {
         return {'id': meterId};
       } else if (action == 'saveContract') {
         final old = await read(tx, 'contracts', k);
+        if (old != null) owned(old, 'Hợp đồng');
         if (old != null &&
             ['active', 'ended', 'expired', 'cancelled'].contains(old['status']))
           throw StateError(
             'Hợp đồng đã hiệu lực không sửa nội dung; hãy lập hợp đồng mới',
           );
         final roomId = id(d['roomId']);
-        final room = found(await read(tx, 'rooms', roomId), 'Phòng');
+        final room = owned(await read(tx, 'rooms', roomId), 'Phòng');
         final previousRoomId = old?['roomId'] is String
             ? old!['roomId'] as String
             : '';
         final previousRoom = previousRoomId.isEmpty || previousRoomId == roomId
             ? null
-            : await read(tx, 'rooms', id(previousRoomId));
+            : owned(await read(tx, 'rooms', id(previousRoomId)), 'Phòng');
         final tenantDrafts = (d['newTenants'] as List? ?? const []).map((
           value,
         ) {
@@ -365,7 +385,7 @@ class SparkCommands {
         final linkedTenantRecords = <String, Data>{};
         if (tenantIdInput.isNotEmpty) {
           tenantId = id(tenantIdInput);
-          final leader = found(
+          final leader = owned(
             await read(tx, 'tenants', tenantId),
             'Người đứng hợp đồng',
           );
@@ -417,7 +437,7 @@ class SparkCommands {
                 .toSet()
                 .toList();
         for (final memberId in existingMemberIds) {
-          final member = found(
+          final member = owned(
             await read(tx, 'tenants', memberId),
             'Thành viên',
           );
@@ -433,7 +453,7 @@ class SparkCommands {
         );
         final tenant = tenantIdInput.isEmpty
             ? createdTenants.singleWhere((t) => t['_id'] == tenantId)
-            : found(await read(tx, 'tenants', tenantId), 'Người thuê');
+            : owned(await read(tx, 'tenants', tenantId), 'Người thuê');
         final previousTenantIds = <String>{
           if (old?['tenantId'] is String) old!['tenantId'] as String,
           if (old?['tenantIds'] is List)
@@ -450,6 +470,7 @@ class SparkCommands {
             id(previousTenantId),
           );
           if (previousTenant != null) {
+            owned(previousTenant, 'Người thuê');
             linkedTenantRecords[previousTenantId] = previousTenant;
           }
         }
@@ -509,7 +530,7 @@ class SparkCommands {
                 .toList();
         if (serviceIds.length > 30) throw StateError('Tối đa 30 dịch vụ/phòng');
         for (final serviceId in serviceIds) {
-          found(await read(tx, 'services', serviceId), 'Dịch vụ');
+          owned(await read(tx, 'services', serviceId), 'Dịch vụ');
         }
         final tenantName = tenant['name'] as String;
         final tenantContact =
@@ -535,6 +556,7 @@ class SparkCommands {
         };
         for (final created in createdTenants) {
           tx.set(ref('tenants', created['_id'] as String), {
+            'ownerId': uid,
             'name': created['name'],
             'phone': created['phone'],
             'email': created['email'],
@@ -558,6 +580,7 @@ class SparkCommands {
               .toSet();
           if (tenantIds.contains(entry.key)) linkedContractIds.add(k);
           tx.update(ref('tenants', entry.key), {
+            'ownerId': uid,
             if (entry.key == tenantId) ...contact,
             'role': entry.key == tenantId ? 'leader' : 'member',
             'contractIds': linkedContractIds.toList(),
@@ -583,6 +606,7 @@ class SparkCommands {
           });
         }
         tx.set(ref('contracts', k), {
+          'ownerId': uid,
           'number': number,
           'roomId': roomId,
           'roomName': room['name'],
@@ -605,7 +629,7 @@ class SparkCommands {
         }, SetOptions(merge: true));
         return {'id': k, 'number': number};
       } else if (action == 'endContract') {
-        final c = found(await read(tx, 'contracts', k), 'Hợp đồng');
+        final c = owned(await read(tx, 'contracts', k), 'Hợp đồng');
         final bs = await list('invoices', field: 'contractId', equals: k);
         if (!active(c) ||
             bs.any((b) => ['unpaid', 'reported'].contains(b['status'])))
@@ -619,9 +643,10 @@ class SparkCommands {
         });
       } else if (action == 'saveExtra' || action == 'deleteExtra') {
         final old = await read(tx, 'extras', k);
+        if (old != null) owned(old, 'Phụ phí');
         final roomId = id(d['roomId'] ?? old?['roomId']),
             p = Billing.period(d['period'] ?? old?['period']);
-        found(await read(tx, 'rooms', roomId), 'Phòng');
+        owned(await read(tx, 'rooms', roomId), 'Phòng');
         final bs = await list('invoices', field: 'roomId', equals: roomId);
         if (bs.any((b) => b['period'] == p && b['status'] != 'void'))
           throw StateError('Đã có hóa đơn kỳ này, không sửa phụ phí');
@@ -629,6 +654,7 @@ class SparkCommands {
           tx.delete(ref('extras', k));
         } else {
           tx.set(ref('extras', k), {
+            'ownerId': uid,
             'roomId': roomId,
             'period': p,
             'reason': text(d['reason'], 'lý do phụ phí'),
@@ -638,11 +664,13 @@ class SparkCommands {
         }
       } else if (action == 'saveMaintenance') {
         final old = await read(tx, 'maintenance', k), roomId = id(d['roomId']);
-        found(await read(tx, 'rooms', roomId), 'Phòng');
+        if (old != null) owned(old, 'Yêu cầu sửa chữa');
+        owned(await read(tx, 'rooms', roomId), 'Phòng');
         final status = d['status'] ?? 'new';
         if (!['new', 'working', 'done', 'cancelled'].contains(status))
           throw StateError('Trạng thái không hợp lệ');
         tx.set(ref('maintenance', k), {
+          'ownerId': uid,
           'roomId': roomId,
           'title': text(d['title'], 'vấn đề'),
           'description': text(d['description'], 'mô tả'),
@@ -657,9 +685,9 @@ class SparkCommands {
         'voidInvoice',
         'resendInvoice',
       ].contains(action)) {
-        final b = found(await read(tx, 'invoices', k), 'Hóa đơn');
+        final b = owned(await read(tx, 'invoices', k), 'Hóa đơn');
         if (action == 'resendInvoice') {
-          final t = found(
+          final t = owned(
             await read(tx, 'tenants', id(b['tenantId'])),
             'Người thuê',
           );
@@ -726,13 +754,13 @@ class SparkCommands {
             );
         }
       } else if (action == 'saveSettings') {
-        tx.set(ref('settings', 'landlord'), {
+        tx.set(ref('settings', uid), {
+          'ownerId': uid,
           'name': text(d['name'], 'tên chủ trọ'),
           'phone': text(d['phone'], 'số điện thoại'),
           for (final f in ['address', 'bankName', 'bankAccount', 'bankHolder'])
             f: text(d[f], f, optional: true),
           'autoBilling': d['autoBilling'] == true,
-          'execution': 'app_open_only',
           'updatedAt': stamp(),
         }, SetOptions(merge: true));
       } else {
@@ -748,7 +776,7 @@ class SparkCommands {
     final now = Billing.today();
     if (p != now.substring(0, 7))
       throw StateError('Chỉ phát hành hóa đơn tháng hiện tại');
-    final room = found(await read(tx, 'rooms', roomId), 'Phòng');
+    final room = owned(await read(tx, 'rooms', roomId), 'Phòng');
     final cs = (await list('contracts', field: 'roomId', equals: roomId))
         .where(
           (c) =>
@@ -759,25 +787,31 @@ class SparkCommands {
         .toList();
     if (cs.length != 1) throw StateError('Cần đúng một hợp đồng còn hiệu lực');
     final c = cs.single, billId = '${cs.single['_id']}_$p';
-    if (await read(tx, 'invoices', billId) != null) {
+    final existing = await read(tx, 'invoices', billId);
+    if (existing != null) {
+      if (existing['ownerId'] != uid)
+        throw StateError('Mã hóa đơn đã được tài khoản khác sử dụng');
       if (commit) return {'id': billId, 'existing': true};
       throw StateError('Kỳ này đã có hóa đơn, kể cả hóa đơn đã hủy');
     }
     final services = <Data>[], meters = <String, Data?>{};
     for (final sid in (room['serviceIds'] as List? ?? []).toSet()) {
-      final s = found(await read(tx, 'services', id(sid)), 'Dịch vụ');
+      final s = owned(await read(tx, 'services', id(sid)), 'Dịch vụ');
       services.add(s);
-      if (s['mode'] == 'meter')
-        meters[sid] = await read(
+      if (s['mode'] == 'meter') {
+        final meter = await read(
           tx,
           'meters',
           '${roomId}_${sid}_${Billing.shift(p, -1)}',
         );
+        if (meter != null) owned(meter, 'Chỉ số');
+        meters[sid] = meter;
+      }
     }
     final extras = await list('extras', field: 'roomId', equals: roomId),
         tenants = await list('tenants', field: 'roomId', equals: roomId);
-    final settings = await read(tx, 'settings', 'landlord') ?? {};
-    final tenant = found(
+    final settings = await read(tx, 'settings', uid) ?? {};
+    final tenant = owned(
       await read(tx, 'tenants', id(c['tenantId'])),
       'Người thuê',
     );
@@ -803,6 +837,7 @@ class SparkCommands {
       p: p,
       day: now,
     );
+    bill['ownerId'] = uid;
     bill['code'] = 'HD-${p.replaceAll('-', '')}-$billId';
     if (commit) {
       tx.set(ref('invoices', billId), {
@@ -847,18 +882,19 @@ class SparkCommands {
           'Người thuê báo đã chuyển tiền',
           '${b['roomName']} · Kiểm tra giao dịch trước khi xác nhận.',
           invoiceId: key,
+          ownerId: b['ownerId'] as String?,
         );
       });
 
   Future<Data> runBilling() async {
     final day = Billing.today();
     final p = day.substring(0, 7);
-    final settings = (await ref('settings', 'landlord').get()).data() ?? {};
+    final settings = (await ref('settings', uid).get()).data() ?? {};
     int created = 0, existing = 0, blocked = 0, late = 0;
     final errors = <String>[];
     for (final snapshot in await list('contracts')) {
       final c = await locked((tx) async {
-        final current = found(
+        final current = owned(
           await read(tx, 'contracts', snapshot['_id']),
           'Hợp đồng',
         );
@@ -880,8 +916,11 @@ class SparkCommands {
       });
       if (settings['autoBilling'] != true || c['status'] != 'active') continue;
       try {
-        final room = (await ref('rooms', id(c['roomId'])).get()).data();
-        if (room == null || room['archived'] == true) continue;
+        final room = owned(
+          (await ref('rooms', id(c['roomId'])).get()).data(),
+          'Phòng',
+        );
+        if (room['archived'] == true) continue;
         final bday =
             int.tryParse('${room['billingDay']}'.split(' ').first) ?? 1;
         if (day.compareTo(Billing.billingDate(p, bday)) < 0) continue;
@@ -906,6 +945,7 @@ class SparkCommands {
       final added = await locked((tx) async {
         final current = await read(tx, 'invoices', b['_id']);
         if (current == null ||
+            current['ownerId'] != uid ||
             !['unpaid', 'reported'].contains(current['status']))
           return false;
         final overdue = Billing.late(current, day),

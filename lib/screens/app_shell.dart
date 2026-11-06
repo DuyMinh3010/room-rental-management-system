@@ -59,7 +59,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final pages = [
       const RoomPage(),
       const TenantListPage(),
-      const ServicePage(),
+      ServicePage(onNavigate: (v) => setState(() => index = v)),
       const InvoicePage(),
       const ContractPage(),
       const MaintenancePage(),

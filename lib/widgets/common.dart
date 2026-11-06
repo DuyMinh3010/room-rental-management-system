@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/record.dart';
 import '../services/app_store.dart';
+import '../utils/validators.dart';
 
 export '../services/app_store.dart' show errorText;
 
@@ -87,17 +88,19 @@ Future<bool> confirm(BuildContext context, String text) async =>
 Future<void> openPage(BuildContext context, Widget page) =>
     Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => page));
 
-Widget box(Widget child, {EdgeInsetsGeometry padding = const EdgeInsets.all(16)}) =>
-    Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: padding,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: line, width: 1),
-      ),
-      child: child,
-    );
+Widget box(
+  Widget child, {
+  EdgeInsetsGeometry padding = const EdgeInsets.all(16),
+}) => Container(
+  margin: const EdgeInsets.only(bottom: 12),
+  padding: padding,
+  decoration: BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: line, width: 1),
+  ),
+  child: child,
+);
 
 Widget info(String title, String value, {bool boldValue = false}) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 7),
@@ -105,10 +108,7 @@ Widget info(String title, String value, {bool boldValue = false}) => Padding(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Expanded(
-        child: Text(
-          title,
-          style: const TextStyle(color: muted, fontSize: 13),
-        ),
+        child: Text(title, style: const TextStyle(color: muted, fontSize: 13)),
       ),
       const SizedBox(width: 12),
       Expanded(
@@ -174,7 +174,9 @@ Widget statusPill(String value, {String? customText}) {
       value == 'Hoàn thành') {
     foreground = const Color(0xFF16A34A);
     background = const Color(0xFFECFDF3);
-  } else if (normalized == 'new' || value == 'Mới' || value == 'Mới tiếp nhận') {
+  } else if (normalized == 'new' ||
+      value == 'Mới' ||
+      value == 'Mới tiếp nhận') {
     foreground = const Color(0xFFDC2626);
     background = const Color(0xFFFDECEC);
   } else if (normalized.contains('unpaid') || value == 'Chưa thanh toán') {
@@ -186,7 +188,9 @@ Widget statusPill(String value, {String? customText}) {
       value == 'Đang xử lý') {
     foreground = const Color(0xFFD97706);
     background = const Color(0xFFFFF4E5);
-  } else if (normalized == 'ended' || value == 'Đã thanh lý' || value == 'Đã kết thúc') {
+  } else if (normalized == 'ended' ||
+      value == 'Đã thanh lý' ||
+      value == 'Đã kết thúc') {
     foreground = ink;
     background = const Color(0xFFBDCCE9);
   } else if (normalized.contains('void') ||
@@ -278,7 +282,9 @@ Widget initialAvatar(
       icon: Icons.water_drop_rounded,
     );
   }
-  if (lower.contains('wifi') || lower.contains('internet') || lower.contains('mạng')) {
+  if (lower.contains('wifi') ||
+      lower.contains('internet') ||
+      lower.contains('mạng')) {
     return (
       color: const Color(0xFF7C3AED),
       softBg: const Color(0xFFF3E8FF),
@@ -286,7 +292,9 @@ Widget initialAvatar(
       icon: Icons.wifi_rounded,
     );
   }
-  if (lower.contains('rác') || lower.contains('rac') || lower.contains('vệ sinh')) {
+  if (lower.contains('rác') ||
+      lower.contains('rac') ||
+      lower.contains('vệ sinh')) {
     return (
       color: const Color(0xFFEA580C),
       softBg: const Color(0xFFFFF7ED),
@@ -324,10 +332,7 @@ Widget serviceBadge(String name, {String mode = '', double size = 34}) {
     width: size,
     height: size,
     alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: v.color,
-      shape: BoxShape.circle,
-    ),
+    decoration: BoxDecoration(color: v.color, shape: BoxShape.circle),
     child: Icon(v.icon, color: Colors.white, size: size * 0.52),
   );
 }
@@ -360,12 +365,8 @@ Widget figmaFilterPill({
   Color? inactiveBg,
   Color? inactiveFg,
 }) {
-  final bg = selected
-      ? (activeBg ?? blue)
-      : (inactiveBg ?? Colors.white);
-  final fg = selected
-      ? (activeFg ?? Colors.white)
-      : (inactiveFg ?? muted);
+  final bg = selected ? (activeBg ?? blue) : (inactiveBg ?? Colors.white);
+  final fg = selected ? (activeFg ?? Colors.white) : (inactiveFg ?? muted);
   return GestureDetector(
     onTap: onTap,
     child: Container(
@@ -379,11 +380,7 @@ Widget figmaFilterPill({
       ),
       child: Text(
         label,
-        style: TextStyle(
-          color: fg,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600),
       ),
     ),
   );
@@ -733,33 +730,37 @@ class _EditFormState extends State<EditForm> {
     }
   }
 
-  InputDecoration _boxDecoration({String? hint, Color? fill}) => InputDecoration(
-    hintText: hint,
-    hintStyle: const TextStyle(color: muted, fontSize: 13),
-    filled: true,
-    fillColor: fill ?? Colors.white,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: blue, width: 1.3),
-    ),
-    errorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1),
-    ),
-    focusedErrorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1.3),
-    ),
-  );
+  InputDecoration _boxDecoration({String? hint, Color? fill}) =>
+      InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: muted, fontSize: 13),
+        filled: true,
+        fillColor: fill ?? Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: blue, width: 1.3),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1.3),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) => PopScope(
@@ -771,7 +772,11 @@ class _EditFormState extends State<EditForm> {
           : AppBar(
               backgroundColor: canvas,
               leading: IconButton(
-                icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+                icon: const Icon(
+                  Icons.chevron_left_rounded,
+                  size: 30,
+                  color: ink,
+                ),
                 onPressed: () => Navigator.maybePop(context),
               ),
               titleSpacing: 0,
@@ -842,7 +847,8 @@ class _EditFormState extends State<EditForm> {
                             key: ValueKey(
                               '${f.key}:${selected[f.key] ?? ''}:${f.options!.keys.join(',')}',
                             ),
-                            initialValue: f.options!.containsKey(selected[f.key])
+                            initialValue:
+                                f.options!.containsKey(selected[f.key])
                                 ? selected[f.key]
                                 : null,
                             isExpanded: true,
@@ -896,6 +902,10 @@ class _EditFormState extends State<EditForm> {
                             ? TextInputType.numberWithOptions(
                                 decimal: f.decimal,
                               )
+                            : f.key == 'phone'
+                            ? TextInputType.phone
+                            : f.key == 'email'
+                            ? TextInputType.emailAddress
                             : TextInputType.text,
                         maxLines: f.key == 'description' || f.key == 'note'
                             ? 3
@@ -912,6 +922,18 @@ class _EditFormState extends State<EditForm> {
                             return f.required
                                 ? 'Vui lòng nhập ${f.title}'
                                 : null;
+                          }
+                          if (f.key == 'email') {
+                            return validateEmail(text, required: f.required);
+                          }
+                          if (f.key == 'phone') {
+                            return validateVietnamesePhone(
+                              text,
+                              required: f.required,
+                            );
+                          }
+                          if (f.key == 'identity') {
+                            return validateIdentity(text, required: f.required);
                           }
                           if (f.number) {
                             final n = num.tryParse(text.replaceAll(',', '.'));
@@ -951,7 +973,9 @@ class _EditFormState extends State<EditForm> {
                   ),
                 ),
                 child: Text(
-                  saving ? 'Đang lưu...' : (widget.submitLabel ?? 'Lưu thay đổi'),
+                  saving
+                      ? 'Đang lưu...'
+                      : (widget.submitLabel ?? 'Lưu thay đổi'),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,

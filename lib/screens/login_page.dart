@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../utils/validators.dart';
 import '../widgets/common.dart';
 import 'register_page.dart';
 
@@ -11,8 +12,11 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  final formKey = GlobalKey<FormState>();
+  final emailFieldKey = GlobalKey<FormFieldState<String>>();
   final email = TextEditingController(), password = TextEditingController();
-  bool busy = false, hidden = true, isLandlord = true;
+  bool busy = false, hidden = true;
+  String? emailAuthError, passwordAuthError;
 
   @override
   void dispose() {
@@ -22,21 +26,75 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _login() async {
-    if (busy) return;
-    if (email.text.trim().isEmpty || password.text.isEmpty) {
-      message(context, 'Nhập email và mật khẩu');
-      return;
-    }
-    setState(() => busy = true);
+    if (busy || !formKey.currentState!.validate()) return;
+    setState(() {
+      emailAuthError = null;
+      passwordAuthError = null;
+      busy = true;
+    });
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email.text.trim(),
         password: password.text,
       );
     } catch (e) {
-      if (mounted) message(context, errorText(e));
+      if (!mounted) return;
+      setState(() {
+        if (e is FirebaseAuthException) {
+          switch (e.code) {
+            case 'invalid-email':
+              emailAuthError = 'Email không hợp lệ';
+            case 'user-not-found':
+              emailAuthError = 'Không tìm thấy tài khoản với email này';
+            case 'wrong-password':
+              passwordAuthError = 'Mật khẩu không chính xác';
+            case 'invalid-credential':
+              passwordAuthError = 'Email hoặc mật khẩu không chính xác';
+            case 'user-disabled':
+              emailAuthError = 'Tài khoản này đã bị vô hiệu hóa';
+            case 'too-many-requests':
+              passwordAuthError =
+                  'Đăng nhập tạm thời bị khóa. Vui lòng thử lại sau';
+            default:
+              passwordAuthError = errorText(e);
+          }
+        } else {
+          passwordAuthError = errorText(e);
+        }
+      });
+      formKey.currentState?.validate();
     } finally {
       if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    final error = validateEmail(email.text);
+    if (error != null) {
+      setState(() => emailAuthError = error);
+      emailFieldKey.currentState?.validate();
+      return;
+    }
+    setState(() => emailAuthError = null);
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(
+        email: email.text.trim(),
+      );
+      if (mounted) {
+        message(context, 'Nếu email hợp lệ, hãy kiểm tra thư đặt lại mật khẩu');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        emailAuthError = e is FirebaseAuthException
+            ? switch (e.code) {
+                'invalid-email' => 'Email không hợp lệ',
+                'user-not-found' => 'Không tìm thấy tài khoản với email này',
+                _ => errorText(e),
+              }
+            : errorText(e);
+      });
+      emailFieldKey.currentState?.validate();
     }
   }
 
@@ -135,230 +193,177 @@ class _LoginPageState extends State<LoginPage> {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Đăng nhập',
-                      style: TextStyle(
-                        color: ink,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Chào mừng bạn quay lại',
-                      style: TextStyle(color: Color(0xFF6B7280), fontSize: 13),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'SĐT/Email',
-                      style: TextStyle(
-                        color: ink,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: email,
-                      keyboardType: TextInputType.emailAddress,
-                      style: const TextStyle(color: ink, fontSize: 13.5),
-                      decoration: _inputDecoration(hint: '@gmail.com'),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Mật khẩu',
-                          style: TextStyle(
-                            color: ink,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Đăng nhập',
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
                         ),
-                        GestureDetector(
-                          onTap: () => perform(
-                            context,
-                            () => FirebaseAuth.instance.sendPasswordResetEmail(
-                              email: email.text.trim(),
-                            ),
-                            'Nếu email hợp lệ, hãy kiểm tra thư đặt lại mật khẩu',
-                          ),
-                          child: const Text(
-                            'Quên mật khẩu?',
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Chào mừng bạn quay lại',
+                        style: TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Email',
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        key: emailFieldKey,
+                        controller: email,
+                        keyboardType: TextInputType.emailAddress,
+                        style: const TextStyle(color: ink, fontSize: 13.5),
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        onChanged: (_) => setState(() => emailAuthError = null),
+                        decoration: _inputDecoration(hint: '@gmail.com'),
+                        validator: (value) =>
+                            emailAuthError ?? validateEmail(value),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Mật khẩu',
                             style: TextStyle(
-                              color: blue,
-                              fontSize: 11.5,
+                              color: ink,
+                              fontSize: 12,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: password,
-                      obscureText: hidden,
-                      style: const TextStyle(color: ink, fontSize: 13.5),
-                      onSubmitted: (_) => _login(),
-                      decoration: _inputDecoration(
-                        hint: '••••••••',
-                        suffixIcon: IconButton(
-                          onPressed: () => setState(() => hidden = !hidden),
-                          icon: Icon(
-                            hidden
-                                ? Icons.visibility_outlined
-                                : Icons.visibility_off_outlined,
-                            color: const Color(0xFF5F6368),
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Container(
-                      height: 44,
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: softBlue,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => setState(() => isLandlord = true),
-                              child: Container(
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: isLandlord
-                                      ? Colors.white
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(11),
-                                ),
-                                child: Text(
-                                  'Chủ trọ',
-                                  style: TextStyle(
-                                    color: isLandlord
-                                        ? blue
-                                        : const Color(0xFF6B7280),
-                                    fontSize: 12,
-                                    fontWeight: isLandlord
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () => setState(() => isLandlord = false),
-                              child: Container(
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: !isLandlord
-                                      ? Colors.white
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(11),
-                                ),
-                                child: Text(
-                                  'Người thuê',
-                                  style: TextStyle(
-                                    color: !isLandlord
-                                        ? blue
-                                        : const Color(0xFF6B7280),
-                                    fontSize: 12,
-                                    fontWeight: !isLandlord
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
-                                ),
+                          GestureDetector(
+                            onTap: _resetPassword,
+                            child: const Text(
+                              'Quên mật khẩu?',
+                              style: TextStyle(
+                                color: blue,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      height: 48,
-                      child: FilledButton(
-                        onPressed: busy ? null : _login,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: blue,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        child: Text(
-                          busy ? 'Đang đăng nhập...' : 'Đăng nhập',
-                          style: const TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 46,
-                      child: OutlinedButton(
-                        onPressed: () => openPage(
-                          context,
-                          const GoogleSignInSheetPage(),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: blue,
-                          side: const BorderSide(color: Color(0xFFBFDBFE)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        child: const Text(
-                          'G  Đăng nhập bằng Google',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      'Lần đầu đăng nhập? Bổ sung SĐT và thông tin cá nhân.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: muted, fontSize: 10.5),
-                    ),
-                    const SizedBox(height: 16),
-                    Center(
-                      child: GestureDetector(
-                        onTap: () => openPage(context, const RegisterPage()),
-                        child: RichText(
-                          text: const TextSpan(
-                            text: 'Chưa có tài khoản?  ',
-                            style: TextStyle(
-                              color: Color(0xFF6B7280),
-                              fontSize: 12.5,
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: password,
+                        obscureText: hidden,
+                        style: const TextStyle(color: ink, fontSize: 13.5),
+                        onFieldSubmitted: (_) => _login(),
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
+                        onChanged: (_) =>
+                            setState(() => passwordAuthError = null),
+                        decoration: _inputDecoration(
+                          hint: '••••••••',
+                          suffixIcon: IconButton(
+                            onPressed: () => setState(() => hidden = !hidden),
+                            icon: Icon(
+                              hidden
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                              color: const Color(0xFF5F6368),
+                              size: 20,
                             ),
-                            children: [
-                              TextSpan(
-                                text: 'Đăng ký',
-                                style: TextStyle(
-                                  color: Color(0xFF3787EB),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+                          ),
+                        ),
+                        validator: (value) {
+                          if ((value ?? '').isEmpty) {
+                            return 'Vui lòng nhập mật khẩu';
+                          }
+                          return passwordAuthError;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        height: 48,
+                        child: FilledButton(
+                          onPressed: busy ? null : _login,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: blue,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: Text(
+                            busy ? 'Đang đăng nhập...' : 'Đăng nhập',
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 46,
+                        child: OutlinedButton(
+                          onPressed: () =>
+                              openPage(context, const GoogleSignInSheetPage()),
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: blue,
+                            side: const BorderSide(color: Color(0xFFBFDBFE)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            'G  Đăng nhập bằng Google',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Lần đầu đăng nhập? Bổ sung SĐT và thông tin cá nhân.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: muted, fontSize: 10.5),
+                      ),
+                      const SizedBox(height: 16),
+                      Center(
+                        child: GestureDetector(
+                          onTap: () => openPage(context, const RegisterPage()),
+                          child: RichText(
+                            text: const TextSpan(
+                              text: 'Chưa có tài khoản?  ',
+                              style: TextStyle(
+                                color: Color(0xFF6B7280),
+                                fontSize: 12.5,
+                              ),
+                              children: [
+                                TextSpan(
+                                  text: 'Đăng ký',
+                                  style: TextStyle(
+                                    color: Color(0xFF3787EB),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],

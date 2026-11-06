@@ -6,13 +6,22 @@ service cloud.firestore {
       return signedIn() && exists(/databases/$(database)/documents/managers/$(request.auth.uid))
         && get(/databases/$(database)/documents/managers/$(request.auth.uid)).data.enabled == true;
     }
+    function owns(data) {
+      return manager() && data.ownerId == request.auth.uid;
+    }
+    function createsOwned() {
+      return manager() && request.resource.data.ownerId == request.auth.uid;
+    }
+    function updatesOwned() {
+      return owns(resource.data) && request.resource.data.ownerId == request.auth.uid;
+    }
     match /managers/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if false; // Cấp quyền bằng Console, không cho tự nâng quyền.
     }
     match /rooms/{id} {
-      allow read: if manager();
-      allow create, update: if manager()
+      allow read: if owns(resource.data);
+      allow create, update: if (createsOwned() || updatesOwned())
         && request.resource.data.name is string && request.resource.data.name.size() > 0
         && request.resource.data.condition in ['Tốt', 'Đang sửa']
         && request.resource.data.price is number && request.resource.data.price > 0
@@ -20,41 +29,53 @@ service cloud.firestore {
         && request.resource.data.capacity is number && request.resource.data.capacity >= 1
         && request.resource.data.serviceIds is list && request.resource.data.serviceIds.size() <= 30;
     }
-    match /tenants/{id} { allow read, create, update: if manager(); }
+    match /tenants/{id} {
+      allow read: if owns(resource.data);
+      allow create: if createsOwned();
+      allow update: if updatesOwned();
+    }
     match /services/{id} {
-      allow read: if manager();
-      allow create, update: if manager() && request.resource.data.mode in ['meter','room','person']
+      allow read: if owns(resource.data);
+      allow create, update: if (createsOwned() || updatesOwned()) && request.resource.data.mode in ['meter','room','person']
         && request.resource.data.price is number && request.resource.data.price >= 0;
     }
     match /meters/{id} {
-      allow read: if manager();
-      allow create, update: if manager() && request.resource.data.previous is number
+      allow read: if owns(resource.data);
+      allow create, update: if (createsOwned() || updatesOwned()) && request.resource.data.previous is number
         && request.resource.data.previous >= 0 && request.resource.data.current is number
         && request.resource.data.current >= request.resource.data.previous;
     }
     match /contracts/{id} {
-      allow read: if manager();
-      allow create, update: if manager() && request.resource.data.rent is number
+      allow read: if owns(resource.data);
+      allow create, update: if (createsOwned() || updatesOwned()) && request.resource.data.rent is number
         && request.resource.data.rent > 0 && request.resource.data.deposit is number
         && request.resource.data.deposit >= 0;
     }
     match /extras/{id} {
-      allow read, delete: if manager();
-      allow create, update: if manager() && request.resource.data.amount is number
+      allow read, delete: if owns(resource.data);
+      allow create, update: if (createsOwned() || updatesOwned()) && request.resource.data.amount is number
         && request.resource.data.amount > 0 && request.resource.data.reason is string
         && request.resource.data.reason.size() > 0;
     }
-    match /maintenance/{id} { allow read, create, update: if manager(); }
-    match /settings/{id} { allow read, create, update: if manager(); }
+    match /maintenance/{id} {
+      allow read: if owns(resource.data);
+      allow create: if createsOwned();
+      allow update: if updatesOwned();
+    }
+    match /settings/{id} {
+      allow read: if owns(resource.data) && id == request.auth.uid;
+      allow create: if createsOwned() && id == request.auth.uid;
+      allow update: if updatesOwned() && id == request.auth.uid;
+    }
     match /system/revision { allow read, create, update: if manager(); }
     match /invoices/{id} {
-      allow read: if manager() || (signedIn() && resource.data.recipientUid == request.auth.uid);
-      allow create: if manager() && request.resource.data.status == 'unpaid'
+      allow read: if owns(resource.data) || (signedIn() && resource.data.recipientUid == request.auth.uid);
+      allow create: if createsOwned() && request.resource.data.status == 'unpaid'
         && request.resource.data.total is number && request.resource.data.total > 0
         && request.resource.data.lines is list && request.resource.data.lines.size() > 0;
-      allow update: if (manager() && request.resource.data.status in ['unpaid','reported','paid','void']
+      allow update: if (updatesOwned() && request.resource.data.status in ['unpaid','reported','paid','void']
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'total','lines','rent','contractId','period','meterPeriod','roomId','tenantId','dueDate','issueDate']))
+          'total','lines','rent','contractId','period','meterPeriod','roomId','tenantId','dueDate','issueDate','ownerId']))
         || (signedIn() && resource.data.recipientUid == request.auth.uid
           && resource.data.status == 'unpaid' && request.resource.data.status == 'reported'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','reportedAt','paymentNote','updatedAt'])
@@ -66,19 +87,20 @@ service cloud.firestore {
         let n = request.resource.data;
         let before = get(/databases/$(database)/documents/invoices/$(n.invoiceId)).data;
         let after = getAfter(/databases/$(database)/documents/invoices/$(n.invoiceId)).data;
-        return signedIn() && n.keys().hasOnly(['title','body','audience','invoiceId','createdAt','delivery'])
+        return signedIn() && n.keys().hasOnly(['ownerId','title','body','audience','invoiceId','createdAt','delivery'])
           && id == 'reported_' + n.invoiceId && n.audience == 'managers'
+          && n.ownerId == before.ownerId && after.ownerId == before.ownerId
           && n.title == 'Người thuê báo đã chuyển tiền' && n.body is string && n.body.size() <= 4000
           && n.delivery == 'in_app' && n.createdAt == request.time
           && before.recipientUid == request.auth.uid && before.status == 'unpaid'
           && after.recipientUid == request.auth.uid && after.status == 'reported';
       }
-      allow read: if (manager() && resource.data.audience == 'managers')
+      allow read: if (owns(resource.data) && resource.data.audience == 'managers')
         || (signedIn() && resource.data.get('recipientUid', '') == request.auth.uid);
-      allow create: if (manager() && request.resource.data.audience in ['managers','tenant']
+      allow create: if (createsOwned() && request.resource.data.audience in ['managers','tenant']
         && request.resource.data.title is string && request.resource.data.body is string
         && request.resource.data.createdAt == request.time) || ownPaymentReport();
-      allow update: if manager() && request.resource.data.audience in ['managers','tenant']
+      allow update: if updatesOwned() && request.resource.data.audience in ['managers','tenant']
         && request.resource.data.title is string && request.resource.data.body is string
         && request.resource.data.createdAt == request.time;
     }

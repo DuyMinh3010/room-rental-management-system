@@ -28,14 +28,23 @@ before(async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     await setDoc(doc(db, "managers", "owner"), { enabled: true });
-    await setDoc(doc(db, "rooms", "r1"), { name: "P.101" });
+    await setDoc(doc(db, "rooms", "r1"), {
+      ownerId: "owner",
+      name: "P.101",
+    });
     await setDoc(doc(db, "invoices", "b1"), {
+      ownerId: "owner",
       recipientUid: "tenant",
       status: "unpaid",
     });
     await setDoc(doc(db, "notifications", "n1"), {
+      ownerId: "owner",
       audience: "tenant",
       recipientUid: "tenant",
+    });
+    await setDoc(doc(db, "rooms", "r2"), {
+      ownerId: "other-owner",
+      name: "P.202",
     });
   });
 });
@@ -46,6 +55,9 @@ test("khách không đọc phòng, quản lý đọc được", async () => {
   );
   await assertSucceeds(
     getDoc(doc(env.authenticatedContext("owner").firestore(), "rooms", "r1")),
+  );
+  await assertFails(
+    getDoc(doc(env.authenticatedContext("owner").firestore(), "rooms", "r2")),
   );
 });
 test("người thuê không đọc phòng/người khác và không tự nâng quyền", async () => {
