@@ -1,0 +1,18 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function manager() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/managers/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/managers/$(request.auth.uid)).data.enabled == true;
+    }
+    match /{collection}/{documentId}/{fileName} {
+      allow read: if collection in ['rooms', 'maintenance'] && manager();
+      allow create: if collection in ['rooms', 'maintenance'] && manager()
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if collection in ['rooms', 'maintenance'] && manager();
+      allow update: if false;
+    }
+  }
+}

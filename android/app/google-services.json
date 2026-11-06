@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "744238998639",
+    "project_id": "quan-li-phong",
+    "storage_bucket": "quan-li-phong.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:744238998639:android:a99dfa7f656253ba46d99a",
+        "android_client_info": {
+          "package_name": "com.example.capstone1"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA_QH3zsofRlkvdf-rKWiNnBYiHt6FEL7w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

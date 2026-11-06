@@ -1,0 +1,11 @@
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+include: package:flutter_lints/flutter.yaml
+linter:
+  rules:
+    prefer_const_constructors: false
+    prefer_const_literals_to_create_immutables: false
+    curly_braces_in_flow_control_structures: false
+    avoid_print: true
