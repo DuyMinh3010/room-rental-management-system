@@ -24,6 +24,24 @@ class ContractPage extends StatefulWidget {
 
 class _ContractPageState extends State<ContractPage> {
   String query = '', filter = 'all';
+  // Tiêu chí sắp xếp: 'date_desc' (Ngày mới nhất), 'date_asc' (Ngày cũ nhất),
+  // 'room_asc' (Phòng tăng dần), 'room_desc' (Phòng giảm dần)
+  String sortBy = 'date_desc';
+
+  Future<void> _deleteContract(BuildContext context, Record c) async {
+    if (!await confirm(
+      context,
+      'Xóa hợp đồng ${c.text('number', c.id)}? Sau khi xóa, phòng ${c.text('roomName')} sẽ trở về trạng thái Trống.',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command('deleteContract', id: c.id),
+      'Đã xóa hợp đồng ${c.text('number', c.id)}',
+    );
+  }
 
   Widget _coloredFilterPill({
     required String id,
@@ -48,6 +66,40 @@ class _ContractPageState extends State<ContractPage> {
             fontSize: 11,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sortChip({
+    required String id,
+    required String labelText,
+    required IconData icon,
+  }) {
+    final selected = sortBy == id;
+    return GestureDetector(
+      onTap: () => setState(() => sortBy = id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? blue : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: selected ? blue : line, width: 0.9),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: selected ? Colors.white : muted),
+            const SizedBox(width: 4),
+            Text(
+              labelText,
+              style: TextStyle(
+                color: selected ? Colors.white : ink,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -81,8 +133,7 @@ class _ContractPageState extends State<ContractPage> {
       text = 'Đã thanh lý';
     }
     return Container(
-      width: 78,
-      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: bg,
@@ -104,7 +155,8 @@ class _ContractPageState extends State<ContractPage> {
   @override
   Widget build(BuildContext context) => RecordsView(
     collection: 'contracts',
-    builder: (_, all) {
+    builder: (_, rawAll) {
+      final all = rawAll.where((c) => !c.archived).toList();
       final activeCount = all.where((c) => c.text('status') == 'active').length;
       final expiringCount = all.where(_isExpiringSoon).length;
       final endedCount = all
@@ -124,8 +176,27 @@ class _ContractPageState extends State<ContractPage> {
           return ['ended', 'cancelled'].contains(c.text('status'));
         }
         return true;
-      }).toList()
-        ..sort((a, b) => b.text('startDate').compareTo(a.text('startDate')));
+      }).toList();
+
+      contracts.sort((a, b) {
+        switch (sortBy) {
+          case 'date_asc':
+            return a.text('startDate').compareTo(b.text('startDate'));
+          case 'room_asc':
+            return naturalCompare(
+              a.text('roomName', a.text('room')),
+              b.text('roomName', b.text('room')),
+            );
+          case 'room_desc':
+            return naturalCompare(
+              b.text('roomName', b.text('room')),
+              a.text('roomName', a.text('room')),
+            );
+          case 'date_desc':
+          default:
+            return b.text('startDate').compareTo(a.text('startDate'));
+        }
+      });
 
       return Scaffold(
         backgroundColor: canvas,
@@ -172,7 +243,7 @@ class _ContractPageState extends State<ContractPage> {
                 'Tìm theo số hợp đồng, người thuê hoặc phòng...',
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -207,7 +278,50 @@ class _ContractPageState extends State<ContractPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
+            // Thanh công cụ sắp xếp theo Ngày & theo Phòng
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  const Icon(Icons.sort_rounded, size: 16, color: muted),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Sắp xếp:',
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _sortChip(
+                    id: 'date_desc',
+                    labelText: 'Ngày mới nhất',
+                    icon: Icons.south_rounded,
+                  ),
+                  const SizedBox(width: 6),
+                  _sortChip(
+                    id: 'date_asc',
+                    labelText: 'Ngày cũ nhất',
+                    icon: Icons.north_rounded,
+                  ),
+                  const SizedBox(width: 6),
+                  _sortChip(
+                    id: 'room_asc',
+                    labelText: 'Phòng A → Z',
+                    icon: Icons.meeting_room_outlined,
+                  ),
+                  const SizedBox(width: 6),
+                  _sortChip(
+                    id: 'room_desc',
+                    labelText: 'Phòng Z → A',
+                    icon: Icons.meeting_room_outlined,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             if (contracts.isEmpty) empty('Chưa có hợp đồng'),
             for (final c in contracts)
               Builder(
@@ -230,12 +344,13 @@ class _ContractPageState extends State<ContractPage> {
                         ContractDetailPage(contractId: c.id),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.all(14),
+                        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Container(
-                              width: 54,
-                              height: 54,
+                              width: 50,
+                              height: 50,
                               decoration: BoxDecoration(
                                 color: softBlue,
                                 borderRadius: BorderRadius.circular(14),
@@ -251,31 +366,48 @@ class _ContractPageState extends State<ContractPage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          c.text('number', c.text('id', c.id)),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: ink,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      _cardStatusPill(c),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 5),
                                   Text(
-                                    c.text('number', c.text('id', c.id)),
+                                    '${c.text('roomName', c.text('room'))}  •  Trưởng phòng: ${c.text('tenantName', c.text('name'))}',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                       color: ink,
-                                      fontSize: 15,
+                                      fontSize: 12.5,
                                       fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Ngày bắt đầu: ${c.text('startDate')}  →  Kết thúc: ${c.text('endDate')}',
+                                    style: const TextStyle(
+                                      color: muted,
+                                      fontSize: 11.5,
                                     ),
                                   ),
                                   const SizedBox(height: 5),
                                   Text(
-                                    '${c.text('tenantName', c.text('name'))}  •  ${c.text('roomName', c.text('room'))}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                    'Tiền phòng: ${money(c.data['rent'])}/tháng  •  Cọc: ${money(c.data['deposit'])}',
                                     style: const TextStyle(
-                                      color: muted,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Thuê : ${money(c.data['rent'])}/tháng',
-                                    style: const TextStyle(
-                                      color: ink,
+                                      color: blue,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -283,38 +415,18 @@ class _ContractPageState extends State<ContractPage> {
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _cardStatusPill(c),
-                                const SizedBox(height: 6),
-                                GestureDetector(
-                                  onTap: () => openPage(
-                                    context,
-                                    ContractDetailPage(contractId: c.id),
-                                  ),
-                                  child: Container(
-                                    width: 78,
-                                    height: 26,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF1C54C4),
-                                      borderRadius: BorderRadius.circular(13),
-                                    ),
-                                    child: const Text(
-                                      'Chi tiết',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (canEnd) ...[
-                                  const SizedBox(height: 6),
-                                  GestureDetector(
+                            moreActionsMenu(
+                              onEdit: () => openPage(
+                                context,
+                                ContractEditPage(contract: c),
+                              ),
+                              extras: [
+                                if (canEnd)
+                                  MoreMenuItem(
+                                    value: 'end',
+                                    label: 'Thanh lý HĐ',
+                                    icon: Icons.event_busy_outlined,
+                                    color: const Color(0xFFD97706),
                                     onTap: () async {
                                       if (await confirm(
                                             context,
@@ -327,29 +439,13 @@ class _ContractPageState extends State<ContractPage> {
                                             'endContract',
                                             id: c.id,
                                           ),
+                                          'Đã thanh lý hợp đồng',
                                         );
                                       }
                                     },
-                                    child: Container(
-                                      width: 78,
-                                      height: 26,
-                                      alignment: Alignment.center,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFBDCCE9),
-                                        borderRadius: BorderRadius.circular(13),
-                                      ),
-                                      child: const Text(
-                                        'Thanh lý',
-                                        style: TextStyle(
-                                          color: Color(0xFF3C4558),
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
                                   ),
-                                ],
                               ],
+                              onDelete: () => _deleteContract(context, c),
                             ),
                           ],
                         ),

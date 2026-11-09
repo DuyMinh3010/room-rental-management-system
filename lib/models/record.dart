@@ -27,11 +27,11 @@ class Record {
 String money(dynamic value) {
   final n = value is num ? value : num.tryParse('$value');
   if (n == null) return 'Chưa cập nhật';
-  return '${n.round()}'.replaceAllMapped(
-        RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-        (m) => '${m[1]}.',
-      ) +
-      'đ';
+  final formatted = '${n.round()}'.replaceAllMapped(
+    RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+    (m) => '${m[1]}.',
+  );
+  return '$formattedđ';
 }
 
 String periodOf([DateTime? day]) {
@@ -42,6 +42,33 @@ String periodOf([DateTime? day]) {
 String previousPeriod(String p) {
   final parts = p.split('-');
   return periodOf(DateTime(int.parse(parts[0]), int.parse(parts[1]) - 1));
+}
+
+String formatDateTimeVi(DateTime? dt, [String fallback = '']) {
+  if (dt == null) return fallback;
+  final vn = dt.isUtc ? dt.add(const Duration(hours: 7)) : dt;
+  final d = vn.day.toString().padLeft(2, '0');
+  final m = vn.month.toString().padLeft(2, '0');
+  final y = vn.year.toString().padLeft(4, '0');
+  final hh = vn.hour.toString().padLeft(2, '0');
+  final mm = vn.minute.toString().padLeft(2, '0');
+  return '$d/$m/$y $hh:$mm';
+}
+
+int naturalCompare(String a, String b) {
+  final reg = RegExp(r'(\d+)|(\D+)');
+  final ma = reg.allMatches(a.trim().toLowerCase()).toList();
+  final mb = reg.allMatches(b.trim().toLowerCase()).toList();
+  final len = ma.length < mb.length ? ma.length : mb.length;
+  for (var i = 0; i < len; i++) {
+    final sa = ma[i].group(0)!;
+    final sb = mb[i].group(0)!;
+    final na = int.tryParse(sa);
+    final nb = int.tryParse(sb);
+    final cmp = (na != null && nb != null) ? na.compareTo(nb) : sa.compareTo(sb);
+    if (cmp != 0) return cmp;
+  }
+  return ma.length.compareTo(mb.length);
 }
 
 String label(String status) =>

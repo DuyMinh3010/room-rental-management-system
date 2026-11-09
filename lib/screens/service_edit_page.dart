@@ -13,7 +13,6 @@ class ServiceEditPage extends StatefulWidget {
 
 class _ServiceEditPageState extends State<ServiceEditPage> {
   final _formKey = GlobalKey<FormState>();
-  late final String _recordId;
   late final TextEditingController _nameCtrl;
   late final TextEditingController _priceCtrl;
   late final TextEditingController _unitCtrl;
@@ -33,7 +32,6 @@ class _ServiceEditPageState extends State<ServiceEditPage> {
   void initState() {
     super.initState();
     final d = widget.service?.data ?? const <String, dynamic>{};
-    _recordId = widget.service?.id ?? store.db.collection('_').doc().id;
     _nameCtrl = TextEditingController(text: d['name']?.toString() ?? '');
     _priceCtrl = TextEditingController(text: d['price']?.toString() ?? '');
     _unitCtrl = TextEditingController(
@@ -65,7 +63,10 @@ class _ServiceEditPageState extends State<ServiceEditPage> {
 
   Future<void> _save() async {
     if (_saving || !_formKey.currentState!.validate()) return;
-    final priceText = _priceCtrl.text.trim().replaceAll('.', '').replaceAll(',', '.');
+    final priceText = _priceCtrl.text
+        .trim()
+        .replaceAll('.', '')
+        .replaceAll(',', '.');
     final parsedPrice = num.tryParse(priceText);
     if (parsedPrice == null || parsedPrice < 0) {
       message(context, 'Đơn giá phải là số hợp lệ');
@@ -80,7 +81,7 @@ class _ServiceEditPageState extends State<ServiceEditPage> {
     };
     setState(() => _saving = true);
     try {
-      await store.command('saveService', id: _recordId, data: data);
+      await store.command('saveService', id: widget.service?.id, data: data);
       if (mounted) {
         Navigator.pop(context);
         message(context, 'Đã lưu lên Firebase');
@@ -175,24 +176,26 @@ class _ServiceEditPageState extends State<ServiceEditPage> {
                 style: const TextStyle(color: ink, fontSize: 13),
                 decoration: _fieldDecoration(
                   hint: 'Điện, Nước, WiFi, Đổ rác, Gửi xe...',
-                  suffix: PopupMenuButton<({String name, String mode, String unit})>(
-                    tooltip: 'Chọn nhanh loại dịch vụ',
-                    icon: const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: muted,
-                      size: 20,
-                    ),
-                    color: Colors.white,
-                    surfaceTintColor: Colors.transparent,
-                    onSelected: _applyPreset,
-                    itemBuilder: (_) => [
-                      for (final p in _presets)
-                        PopupMenuItem(value: p, child: Text(p.name)),
-                    ],
-                  ),
+                  suffix:
+                      PopupMenuButton<({String name, String mode, String unit})>(
+                        tooltip: 'Chọn nhanh loại dịch vụ',
+                        icon: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: muted,
+                          size: 20,
+                        ),
+                        color: Colors.white,
+                        surfaceTintColor: Colors.transparent,
+                        onSelected: _applyPreset,
+                        itemBuilder: (_) => [
+                          for (final p in _presets)
+                            PopupMenuItem(value: p, child: Text(p.name)),
+                        ],
+                      ),
                 ),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Vui lòng nhập tên dịch vụ' : null,
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Vui lòng nhập tên dịch vụ'
+                    : null,
               ),
               const SizedBox(height: 16),
               _label('Cách tính'),

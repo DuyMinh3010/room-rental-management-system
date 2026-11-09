@@ -57,6 +57,17 @@ function notify(tx, key, title, body, extra = {}) {
     ...extra,
   });
 }
+function owned(d, ownerId, label) {
+  found(d, label);
+  if (d.ownerId !== ownerId)
+    throw new Error(`${label} không thuộc tài khoản chủ trọ này`);
+  return d;
+}
+const ownerQuery = (collection, ownerId, field, value) =>
+  db
+    .collection(collection)
+    .where("ownerId", "==", ownerId)
+    .where(field, "==", value);
 function num(v, label, min = 0, integer = true) {
   return B.finite(v, label, { min, integer });
 }
@@ -72,18 +83,21 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
   await manager(req.auth?.uid);
   const a = req.data || {},
     action = a.action,
-    d = a.data || {};
+    d = a.data || {},
+    ownerId = req.auth.uid;
   try {
     if (action === "previewInvoice")
-      return await invoice(a.roomId, B.period(a.period), false);
+      return await invoice(ownerId, a.roomId, B.period(a.period), false);
     if (action === "issueInvoice")
-      return await invoice(a.roomId, B.period(a.period), true);
-    if (action === "runBilling") return await runBilling();
+      return await invoice(ownerId, a.roomId, B.period(a.period), true);
+    if (action === "runBilling") return await runBilling(ownerId);
+    if (action === "migrateServiceIds") return await migrateServiceIds(ownerId);
+    if (action === "migrateOwnerData") return await migrateOwnerData(ownerId);
     if (action === "migrateLegacy")
-      return await migrateLegacy(a.apply === true);
+      return await migrateLegacy(ownerId, a.apply === true);
     if (action === "linkTenantAccount") {
       const t = await ref("tenants", id(a.id)).get();
-      found(value(t), "Người thuê");
+      owned(value(t), ownerId, "Người thuê");
       const email = text(a.email, "email");
       let u;
       try {
@@ -95,7 +109,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       }
       await db.runTransaction(async (tx) => {
         const q = await tx.get(
-          db.collection("contracts").where("tenantId", "==", a.id),
+          ownerQuery("contracts", ownerId, "tenantId", a.id),
         );
         tx.update(t.ref, { authUid: u.uid, email, updatedAt: stamp() });
         for (const c of q.docs)
@@ -109,16 +123,19 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       if (action === "saveRoom") {
         const r = ref("rooms", key),
           old = value(await tx.get(r));
+        if (old) owned(old, ownerId, "Phòng");
         const name = text(d.name, "tên phòng"),
-          lock = ref("roomNames", hash(name));
+          lock = ref("roomNames", `${ownerId}_${hash(name)}`);
         const [taken, duplicates, tenants] = await Promise.all([
           tx.get(lock),
-          tx.get(db.collection("rooms").where("name", "==", name)),
-          tx.get(db.collection("tenants").where("roomId", "==", key)),
+          tx.get(ownerQuery("rooms", ownerId, "name", name)),
+          tx.get(ownerQuery("tenants", ownerId, "roomId", key)),
         ]);
         if (
           (taken.exists && taken.data().roomId !== key) ||
-          duplicates.docs.some((x) => x.id !== key && !x.data().archived)
+          duplicates.docs.some(
+            (x) => x.id !== key && !x.data().archived,
+          )
         )
           throw new Error("Tên phòng đã tồn tại");
         const condition = text(d.condition, "tình trạng");
@@ -134,11 +151,12 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         const term = num(d.paymentTermDays, "số ngày thanh toán");
         if (term > 60) throw new Error("Hạn thanh toán tối đa 60 ngày");
         if (old && old.name !== name)
-          tx.delete(ref("roomNames", hash(old.name || key)));
-        tx.set(lock, { roomId: key });
+          tx.delete(ref("roomNames", `${ownerId}_${hash(old.name || key)}`));
+        tx.set(lock, { ownerId, roomId: key });
         tx.set(
           r,
           {
+            ownerId,
             name,
             condition,
             status: condition,
@@ -164,10 +182,10 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       }
       if (action === "archiveRoom") {
         const r = ref("rooms", id(a.id)),
-          room = found(value(await tx.get(r)), "Phòng");
+          room = owned(value(await tx.get(r)), ownerId, "Phòng");
         const [ts, cs, bs] = await Promise.all(
           ["tenants", "contracts", "invoices"].map((c) =>
-            tx.get(db.collection(c).where("roomId", "==", a.id)),
+            tx.get(ownerQuery(c, ownerId, "roomId", a.id)),
           ),
         );
         if (
@@ -179,24 +197,40 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             "Cần chuyển người thuê, kết thúc hợp đồng và xử lý hóa đơn chưa trả trước",
           );
         tx.update(r, { archived: true, updatedAt: stamp() });
-        tx.delete(ref("roomNames", hash(room.name)));
+        tx.delete(ref("roomNames", `${ownerId}_${hash(room.name)}`));
         return { id: a.id };
       }
       if (action === "saveTenant" || action === "archiveTenant") {
         const r = ref("tenants", key),
           old = value(await tx.get(r));
+        if (old) owned(old, ownerId, "Người thuê");
         const roomId =
           action === "archiveTenant" ? "" : text(d.roomId, "phòng", true);
+        const tenantEmail =
+          action === "archiveTenant" ? "" : text(d.email, "email", true).toLowerCase();
+        if (
+          tenantEmail &&
+          !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(tenantEmail)
+        )
+          throw new Error("Email người thuê không hợp lệ");
+        if (action === "saveTenant" && old?.authUid && tenantEmail !== old.email)
+          throw new Error(
+            "Hồ sơ đã liên kết tài khoản. Không đổi email tại đây; hãy cập nhật email của tài khoản đã liên kết.",
+          );
         const nextRoom = roomId
-          ? found(value(await tx.get(ref("rooms", id(roomId)))), "Phòng")
+          ? owned(value(await tx.get(ref("rooms", id(roomId)))), ownerId, "Phòng")
           : null;
         const oldRoomId = old?.roomId || "";
         if (oldRoomId && oldRoomId !== roomId)
-          await tx.get(ref("rooms", oldRoomId));
+          owned(
+            value(await tx.get(ref("rooms", oldRoomId))),
+            ownerId,
+            "Phòng",
+          );
         const [cs, others] = await Promise.all([
-          tx.get(db.collection("contracts").where("tenantId", "==", key)),
+          tx.get(ownerQuery("contracts", ownerId, "tenantId", key)),
           roomId
-            ? tx.get(db.collection("tenants").where("roomId", "==", roomId))
+            ? tx.get(ownerQuery("tenants", ownerId, "roomId", roomId))
             : Promise.resolve(null),
         ]);
         if (cs.docs.some((x) => active(x.data()) && x.data().roomId !== roomId))
@@ -215,14 +249,20 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
           throw new Error("Phòng đã đủ số người tối đa");
         if (action === "archiveTenant") {
           found(old, "Người thuê");
-          tx.update(r, { archived: true, roomId: "", updatedAt: stamp() });
+          tx.update(r, {
+            ownerId,
+            archived: true,
+            roomId: "",
+            updatedAt: stamp(),
+          });
         } else
           tx.set(
             r,
             {
+              ownerId,
               name: text(d.name, "họ tên"),
               phone: text(d.phone, "số điện thoại"),
-              email: text(d.email, "email", true),
+              email: tenantEmail,
               identity: text(d.identity, "CCCD", true),
               birthday: text(d.birthday, "ngày sinh", true),
               address: text(d.address, "địa chỉ", true),
@@ -250,8 +290,12 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       if (action === "saveService" || action === "archiveService") {
         const r = ref("services", key),
           old = value(await tx.get(r));
+        if (old) owned(old, ownerId, "Dịch vụ");
         const rooms = await tx.get(
-          db.collection("rooms").where("serviceIds", "array-contains", key),
+          db
+            .collection("rooms")
+            .where("ownerId", "==", ownerId)
+            .where("serviceIds", "array-contains", key),
         );
         if (action === "archiveService") {
           found(old, "Dịch vụ");
@@ -272,6 +316,8 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         tx.set(
           r,
           {
+            id: key,
+            ownerId,
             name: text(d.name, "tên dịch vụ"),
             mode,
             price: num(d.price, "đơn giá"),
@@ -289,12 +335,16 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       if (action === "assignServices") {
         const roomId = id(a.roomId),
           r = ref("rooms", roomId);
-        found(value(await tx.get(r)), "Phòng");
+        owned(value(await tx.get(r)), ownerId, "Phòng");
         if (!Array.isArray(a.serviceIds) || a.serviceIds.length > 30)
           throw new Error("Tối đa 30 dịch vụ/phòng");
         const ids = [...new Set(a.serviceIds.map(id))];
         for (const x of ids)
-          found(value(await tx.get(ref("services", x))), "Dịch vụ");
+          owned(
+            value(await tx.get(ref("services", x))),
+            ownerId,
+            "Dịch vụ",
+          );
         tx.update(r, {
           serviceIds: ids,
           updatedAt: stamp(),
@@ -312,6 +362,8 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             value(await tx.get(ref("services", serviceId))),
             "Dịch vụ",
           );
+        owned(room, ownerId, "Phòng");
+        owned(service, ownerId, "Dịch vụ");
         if (
           service.mode !== "meter" ||
           !(room.serviceIds || []).includes(serviceId)
@@ -332,7 +384,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         if (p > B.today().slice(0, 7))
           throw new Error("Chưa nhập chỉ số cho tháng tương lai");
         const bills = await tx.get(
-          db.collection("invoices").where("roomId", "==", roomId),
+          ownerQuery("invoices", ownerId, "roomId", roomId),
         );
         if (
           bills.docs.some(
@@ -356,6 +408,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             "Kỳ sau đã có chỉ số phụ thuộc, không sửa chỉ số kỳ này",
           );
         tx.set(mref, {
+          ownerId,
           roomId,
           serviceId,
           period: p,
@@ -373,6 +426,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       if (action === "saveContract") {
         const r = ref("contracts", key),
           old = value(await tx.get(r));
+        if (old) owned(old, ownerId, "Hợp đồng");
         if (
           old &&
           ["active", "ended", "expired", "cancelled"].includes(old.status)
@@ -382,19 +436,24 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
           );
         const roomId = id(d.roomId),
           tenantId = id(d.tenantId);
-        const room = found(value(await tx.get(ref("rooms", roomId))), "Phòng"),
-          tenant = found(
+        const room = owned(
+            value(await tx.get(ref("rooms", roomId))),
+            ownerId,
+            "Phòng",
+          ),
+          tenant = owned(
             value(await tx.get(ref("tenants", tenantId))),
+            ownerId,
             "Người thuê",
           );
         const cs = await tx.get(
-          db.collection("contracts").where("roomId", "==", roomId),
+          ownerQuery("contracts", ownerId, "roomId", roomId),
         );
         const number = text(d.number, "số hợp đồng"),
-          lock = ref("contractNumbers", hash(number));
+          lock = ref("contractNumbers", `${ownerId}_${hash(number)}`);
         const occupied = await tx.get(lock);
         const duplicates = await tx.get(
-          db.collection("contracts").where("number", "==", number),
+          ownerQuery("contracts", ownerId, "number", number),
         );
         if (
           (occupied.exists && occupied.data().contractId !== key) ||
@@ -420,12 +479,15 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         )
           throw new Error("Phòng có hợp đồng trùng thời hạn");
         if (old?.number && old.number !== number)
-          tx.delete(ref("contractNumbers", hash(old.number)));
+          tx.delete(
+            ref("contractNumbers", `${ownerId}_${hash(old.number)}`),
+          );
         const status = startDate > B.today() ? "scheduled" : "active";
-        tx.set(lock, { contractId: key });
+        tx.set(lock, { ownerId, contractId: key });
         tx.set(
           r,
           {
+            ownerId,
             number,
             roomId,
             roomName: room.name,
@@ -448,10 +510,10 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       }
       if (action === "endContract") {
         const r = ref("contracts", id(a.id)),
-          c = found(value(await tx.get(r)), "Hợp đồng");
+          c = owned(value(await tx.get(r)), ownerId, "Hợp đồng");
         if (!active(c)) throw new Error("Hợp đồng đã kết thúc");
         const bs = await tx.get(
-          db.collection("invoices").where("contractId", "==", a.id),
+          ownerQuery("invoices", ownerId, "contractId", a.id),
         );
         if (
           bs.docs.some((x) => ["unpaid", "reported"].includes(x.data().status))
@@ -469,11 +531,12 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       if (action === "saveExtra" || action === "deleteExtra") {
         const xref = ref("extras", key),
           old = value(await tx.get(xref));
+        if (old) owned(old, ownerId, "Phụ phí");
         const roomId = id(d.roomId || old?.roomId);
-        found(value(await tx.get(ref("rooms", roomId))), "Phòng");
+        owned(value(await tx.get(ref("rooms", roomId))), ownerId, "Phòng");
         const p = B.period(d.period || old?.period);
         const bs = await tx.get(
-          db.collection("invoices").where("roomId", "==", roomId),
+          ownerQuery("invoices", ownerId, "roomId", roomId),
         );
         if (
           bs.docs.some(
@@ -484,6 +547,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         if (action === "deleteExtra") tx.delete(xref);
         else
           tx.set(xref, {
+            ownerId,
             roomId,
             period: p,
             reason: text(d.reason, "lý do phụ phí"),
@@ -498,13 +562,15 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         const r = ref("maintenance", key),
           old = value(await tx.get(r)),
           roomId = id(d.roomId);
-        found(value(await tx.get(ref("rooms", roomId))), "Phòng");
+        if (old) owned(old, ownerId, "Yêu cầu sửa chữa");
+        owned(value(await tx.get(ref("rooms", roomId))), ownerId, "Phòng");
         const status = d.status || "new";
         if (!["new", "working", "done", "cancelled"].includes(status))
           throw new Error("Trạng thái không hợp lệ");
         tx.set(
           r,
           {
+            ownerId,
             roomId,
             title: text(d.title, "vấn đề"),
             description: text(d.description, "mô tả"),
@@ -521,9 +587,10 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       }
       if (action === "resendInvoice") {
         const r = ref("invoices", id(a.id)),
-          bill = found(value(await tx.get(r)), "Hóa đơn");
-        const tenant = found(
+          bill = owned(value(await tx.get(r)), ownerId, "Hóa đơn");
+        const tenant = owned(
           value(await tx.get(ref("tenants", id(bill.tenantId)))),
+          ownerId,
           "Người thuê",
         );
         if (!tenant.authUid)
@@ -541,13 +608,18 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
           `resent_${a.id}_${count}`,
           "Hóa đơn tiền phòng",
           `${bill.roomName} · ${bill.period}: ${bill.total.toLocaleString("vi-VN")}đ`,
-          { audience: "tenant", recipientUid: tenant.authUid, invoiceId: a.id },
+          {
+            ownerId,
+            audience: "tenant",
+            recipientUid: tenant.authUid,
+            invoiceId: a.id,
+          },
         );
         return { id: a.id };
       }
       if (action === "confirmPayment" || action === "voidInvoice") {
         const r = ref("invoices", id(a.id)),
-          bill = found(value(await tx.get(r)), "Hóa đơn");
+          bill = owned(value(await tx.get(r)), ownerId, "Hóa đơn");
         if (bill.status === "paid" || bill.status === "void")
           throw new Error("Hóa đơn đã thanh toán hoặc đã hủy");
         if (action === "voidInvoice") {
@@ -563,6 +635,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
               "Hóa đơn đã hủy",
               `${bill.roomName} · ${bill.period}`,
               {
+                ownerId,
                 audience: "tenant",
                 recipientUid: bill.recipientUid,
                 invoiceId: a.id,
@@ -585,7 +658,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             `paid_manager_${a.id}`,
             "Đã thanh toán hóa đơn",
             `${bill.roomName}: ${bill.total.toLocaleString("vi-VN")}đ`,
-            { invoiceId: a.id },
+            { ownerId, invoiceId: a.id },
           );
           if (bill.recipientUid)
             notify(
@@ -594,6 +667,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
               "Chủ trọ đã xác nhận thanh toán",
               `${bill.roomName} · ${bill.period}`,
               {
+                ownerId,
                 audience: "tenant",
                 recipientUid: bill.recipientUid,
                 invoiceId: a.id,
@@ -604,8 +678,9 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
       }
       if (action === "saveSettings") {
         tx.set(
-          ref("settings", "landlord"),
+          ref("settings", ownerId),
           {
+            ownerId,
             name: text(d.name, "tên chủ trọ"),
             phone: text(d.phone, "số điện thoại"),
             address: text(d.address, "địa chỉ", true),
@@ -617,13 +692,13 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
           },
           { merge: true },
         );
-        return { id: "landlord" };
+        return { id: ownerId };
       }
       if (action === "addPhoto") {
         if (!["rooms", "maintenance"].includes(a.collection))
           throw new Error("Không hỗ trợ ảnh ở mục này");
         const r = ref(a.collection, id(a.id)),
-          old = found(value(await tx.get(r)), "Bản ghi");
+          old = owned(value(await tx.get(r)), ownerId, "Bản ghi");
         const url = text(a.url, "URL ảnh");
         if (!url.startsWith("https://firebasestorage.googleapis.com/"))
           throw new Error("Ảnh phải được tải lên Firebase Storage");
@@ -671,20 +746,328 @@ exports.reportPayment = onCall(async (req) => {
       `reported_${billId}`,
       "Người thuê báo đã chuyển tiền",
       `${b.roomName} · ${b.period}. Cần kiểm tra giao dịch trước khi xác nhận.`,
-      { invoiceId: billId },
+      { ownerId: b.ownerId, invoiceId: billId },
     );
     return { ok: true };
   });
 });
 
+exports.tenantPortal = onCall({ timeoutSeconds: 30 }, async (req) => {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Cần đăng nhập");
+  if (req.auth.token.email_verified !== true)
+    throw new HttpsError("permission-denied", "Hãy xác minh email trước.");
+  const action = req.data?.action || "load",
+    email = req.auth.token.email;
+
+  if (action === "lookup") {
+    if (typeof email !== "string" || !email.trim())
+      throw new HttpsError(
+        "failed-precondition",
+        "Tài khoản đăng nhập chưa có email.",
+      );
+    const candidates = [...new Set([email.trim(), email.trim().toLowerCase()])];
+    const snapshots = await Promise.all(
+      candidates.map((candidate) =>
+        db.collection("tenants").where("email", "==", candidate).get(),
+      ),
+    );
+    const unique = new Map();
+    for (const snapshot of snapshots)
+      for (const doc of snapshot.docs)
+        if (!doc.data().archived && doc.data().roomId)
+          unique.set(doc.id, doc);
+    return {
+      profiles: [...unique.values()].map((doc) => ({
+        id: doc.id,
+        name: doc.data().name || "",
+        email: doc.data().email || "",
+        authUid: doc.data().authUid || "",
+      })),
+    };
+  }
+
+  if (action === "link") {
+    if (typeof email !== "string" || !email.trim())
+      throw new HttpsError(
+        "failed-precondition",
+        "Tài khoản đăng nhập chưa có email.",
+      );
+    const tenantId = id(req.data?.data?.tenantId);
+    const tenantRef = ref("tenants", tenantId);
+    let tenantName = "";
+    try {
+      await db.runTransaction(async (tx) => {
+        const snapshot = await tx.get(tenantRef);
+        const tenant = snapshot.data();
+        if (
+          !snapshot.exists ||
+          !tenant ||
+          typeof tenant.email !== "string" ||
+          tenant.email.trim().toLowerCase() !== email.trim().toLowerCase() ||
+          tenant.archived ||
+          typeof tenant.roomId !== "string" ||
+          !tenant.roomId
+        )
+          throw new HttpsError(
+            "permission-denied",
+            "Email không khớp hồ sơ thuê đang hoạt động. Hãy nhờ chủ trọ kiểm tra email và phòng.",
+          );
+        if (tenant.authUid && tenant.authUid !== uid)
+          throw new HttpsError(
+            "failed-precondition",
+            "Hồ sơ thuê này đã liên kết với một tài khoản khác. Hãy liên hệ chủ trọ.",
+          );
+        tenantName = tenant.name || "";
+        tx.update(tenantRef, { authUid: uid, updatedAt: stamp() });
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError(
+        "failed-precondition",
+        error.message || "Không liên kết được hồ sơ thuê.",
+      );
+    }
+    return { tenantName };
+  }
+
+  if (action !== "load" && action !== "createMaintenance")
+    throw new HttpsError("invalid-argument", "Thao tác không được hỗ trợ.");
+
+  const profiles = await db
+    .collection("tenants")
+    .where("authUid", "==", uid)
+    .get();
+  const linked = profiles.docs.filter((doc) => !doc.data().archived);
+  if (linked.length !== 1)
+    throw new HttpsError(
+      "failed-precondition",
+      "Tài khoản cần được liên kết với đúng một hồ sơ thuê đang hoạt động.",
+    );
+
+  const profileDoc = linked[0],
+    tenant = profileDoc.data(),
+    ownerId = id(tenant.ownerId),
+    roomId = id(tenant.roomId);
+  const [roomSnap, settingsSnap] = await Promise.all([
+    ref("rooms", roomId).get(),
+    ref("settings", ownerId).get(),
+  ]);
+  const room = roomSnap.data();
+  if (!room || room.ownerId !== ownerId || room.archived)
+    throw new HttpsError(
+      "failed-precondition",
+      "Phòng thuê không còn hoạt động. Vui lòng liên hệ chủ trọ.",
+    );
+
+  if (action === "createMaintenance") {
+    const data = req.data.data || {};
+    const title = text(data.title, "tiêu đề yêu cầu");
+    const description = text(data.description, "mô tả yêu cầu");
+    const issueType = text(data.issueType, "loại sự cố");
+    const priority = text(data.priority, "mức độ ưu tiên");
+    if (!["Thiết bị", "Điện / Nước", "Nội thất", "Khác"].includes(issueType))
+      throw new HttpsError("invalid-argument", "Loại sự cố không hợp lệ.");
+    if (!["Thấp", "Trung bình", "Cao"].includes(priority))
+      throw new HttpsError("invalid-argument", "Mức độ ưu tiên không hợp lệ.");
+
+    const maintenanceRef = db.collection("maintenance").doc();
+    await db.runTransaction(async (tx) => {
+      const currentTenant = await tx.get(profileDoc.ref);
+      const currentRoom = await tx.get(ref("rooms", roomId));
+      const current = currentTenant.data(),
+        currentRoomData = currentRoom.data();
+      if (
+        !currentTenant.exists ||
+        current.authUid !== uid ||
+        current.archived ||
+        current.roomId !== roomId ||
+        !currentRoom.exists ||
+        currentRoomData.ownerId !== ownerId ||
+        currentRoomData.archived
+      )
+        throw new HttpsError(
+          "failed-precondition",
+          "Hồ sơ thuê hoặc phòng không còn hoạt động.",
+        );
+      tx.create(maintenanceRef, {
+        ownerId,
+        roomId,
+        tenantId: profileDoc.id,
+        requesterUid: uid,
+        roomName: room.name,
+        tenantName: tenant.name || "",
+        title,
+        description,
+        issueType,
+        priority,
+        status: "new",
+        cost: 0,
+        createdAt: stamp(),
+        updatedAt: stamp(),
+      });
+      notify(
+        tx,
+        `tenant_maintenance_${maintenanceRef.id}`,
+        "Yêu cầu bảo trì mới",
+        `${room.name} · ${title}`,
+        { ownerId, roomId },
+      );
+    });
+    return { id: maintenanceRef.id };
+  }
+
+  const [contractsSnap, metersSnap, maintenanceSnap, invoicesSnap] =
+    await Promise.all([
+      db
+        .collection("contracts")
+        .where("ownerId", "==", ownerId)
+        .where("roomId", "==", roomId)
+        .get(),
+      db
+        .collection("meters")
+        .where("ownerId", "==", ownerId)
+        .where("roomId", "==", roomId)
+        .get(),
+      db
+        .collection("maintenance")
+        .where("ownerId", "==", ownerId)
+        .where("roomId", "==", roomId)
+        .get(),
+      db
+        .collection("invoices")
+        .where("ownerId", "==", ownerId)
+        .where("recipientUid", "==", uid)
+        .get(),
+    ]);
+
+  const contracts = contractsSnap.docs
+    .filter((doc) => {
+      const contract = doc.data();
+      return (
+        contract.tenantId === profileDoc.id ||
+        (Array.isArray(contract.tenantIds) &&
+          contract.tenantIds.includes(profileDoc.id))
+      );
+    })
+    .map((doc) =>
+      tenantRecord(doc, [
+        "number",
+        "status",
+        "roomName",
+        "startDate",
+        "endDate",
+        "rent",
+        "deposit",
+        "paymentDay",
+        "paymentTermDays",
+        "note",
+      ]),
+    )
+    .sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const serviceIds = [...new Set(room.serviceIds || [])].slice(0, 30);
+  const serviceSnaps = serviceIds.length
+    ? await db.getAll(...serviceIds.map((serviceId) => ref("services", id(serviceId))))
+    : [];
+  const services = serviceSnaps
+    .filter((doc) => doc.exists && doc.data().ownerId === ownerId && !doc.data().archived)
+    .map((doc) =>
+      tenantRecord(doc, ["name", "mode", "price", "unit", "description"]),
+    );
+  const maintenance = maintenanceSnap.docs
+    .filter(
+      (doc) =>
+        doc.data().tenantId === profileDoc.id ||
+        doc.data().requesterUid === uid,
+    )
+    .map((doc) =>
+      tenantRecord(doc, [
+        "title",
+        "description",
+        "issueType",
+        "priority",
+        "status",
+        "cost",
+        "createdAt",
+        "updatedAt",
+      ]),
+    )
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+  return {
+    tenant: {
+      id: profileDoc.id,
+      name: tenant.name || "",
+      email: tenant.email || "",
+      phone: tenant.phone || "",
+      role: tenant.role || "",
+      roomId,
+    },
+    room: {
+      id: roomSnap.id,
+      name: room.name || "",
+      condition: room.condition || room.status || "",
+      area: room.area ?? null,
+      capacity: room.capacity ?? null,
+      price: room.price ?? null,
+      billingDay: room.billingDay || "",
+      paymentTermDays: room.paymentTermDays ?? null,
+      description: room.description || "",
+    },
+    landlord: {
+      name: settingsSnap.data()?.name || "",
+      phone: settingsSnap.data()?.phone || "",
+      address: settingsSnap.data()?.address || "",
+    },
+    contracts,
+    services,
+    meters: metersSnap.docs
+      .filter((doc) => serviceIds.includes(doc.data().serviceId))
+      .map((doc) =>
+        tenantRecord(doc, ["serviceId", "period", "previous", "current"]),
+      ),
+    maintenance,
+    invoices: invoicesSnap.docs.map((doc) =>
+      tenantRecord(doc, [
+        "roomName",
+        "period",
+        "dueDate",
+        "issueDate",
+        "total",
+        "status",
+        "code",
+      ]),
+    ),
+  };
+});
+
+function tenantRecord(doc, fields) {
+  const data = doc.data();
+  const record = { id: doc.id };
+  for (const field of fields) {
+    const value = data[field];
+    if (value !== undefined) {
+      record[field] =
+        value && typeof value.toDate === "function"
+          ? value.toDate().toISOString()
+          : value;
+    }
+  }
+  return record;
+}
+
 // Mỗi hợp đồng/kỳ chỉ có một ID hóa đơn. Transaction chống tạo trùng khi lịch và thao tác tay cùng chạy.
-async function invoice(roomId, p, commit) {
+async function invoice(ownerId, roomId, p, commit) {
   id(roomId);
   const day = B.today();
   return db.runTransaction(async (tx) => {
-    const room = found(value(await tx.get(ref("rooms", roomId))), "Phòng");
+    const room = owned(
+      value(await tx.get(ref("rooms", roomId))),
+      ownerId,
+      "Phòng",
+    );
     const cs = await tx.get(
-      db.collection("contracts").where("roomId", "==", roomId),
+      ownerQuery("contracts", ownerId, "roomId", roomId),
     );
     const contracts = cs.docs
       .map(value)
@@ -700,6 +1083,7 @@ async function invoice(roomId, p, commit) {
       billref = ref("invoices", billId);
     const prior = value(await tx.get(billref));
     if (prior) {
+      owned(prior, ownerId, "Hóa đơn");
       if (commit) return { id: billId, existing: true };
       throw new Error(
         "Kỳ này đã có hóa đơn (kể cả đã hủy). Không tạo thêm hóa đơn trùng kỳ",
@@ -713,24 +1097,32 @@ async function invoice(roomId, p, commit) {
     const services = [];
     const meters = {};
     for (const sid of serviceIds) {
-      const s = found(value(await tx.get(ref("services", id(sid)))), "Dịch vụ");
+      const s = owned(
+        value(await tx.get(ref("services", id(sid)))),
+        ownerId,
+        "Dịch vụ",
+      );
       services.push(s);
-      if (s.mode === "meter")
-        meters[sid] = value(
+      if (s.mode === "meter") {
+        const meter = value(
           await tx.get(
             ref("meters", `${roomId}_${sid}_${B.previousPeriod(p)}`),
           ),
         );
+        if (meter) owned(meter, ownerId, "Chỉ số");
+        meters[sid] = meter;
+      }
     }
     const xs = await tx.get(
-      db.collection("extras").where("roomId", "==", roomId),
+      ownerQuery("extras", ownerId, "roomId", roomId),
     );
     const ts = await tx.get(
-      db.collection("tenants").where("roomId", "==", roomId),
+      ownerQuery("tenants", ownerId, "roomId", roomId),
     );
-    const settings = value(await tx.get(ref("settings", "landlord"))) || {};
-    const t = found(
+    const settings = value(await tx.get(ref("settings", ownerId))) || {};
+    const t = owned(
       value(await tx.get(ref("tenants", c.tenantId))),
+      ownerId,
       "Người thuê",
     );
     if (t.roomId !== roomId)
@@ -755,6 +1147,7 @@ async function invoice(roomId, p, commit) {
       p,
       day,
     });
+    bill.ownerId = ownerId;
     bill.code = `HD-${p.replace("-", "")}-${billId.slice(0, 8).toUpperCase()}`;
     if (commit) {
       tx.create(billref, { ...bill, createdAt: stamp(), updatedAt: stamp() });
@@ -763,7 +1156,7 @@ async function invoice(roomId, p, commit) {
         `issued_manager_${billId}`,
         "Đã phát hành hóa đơn",
         `${room.name} · ${p}${bill.recipientUid ? "" : " — chưa liên kết tài khoản người thuê"}`,
-        { invoiceId: billId },
+        { ownerId, invoiceId: billId },
       );
       if (bill.recipientUid)
         notify(
@@ -772,6 +1165,7 @@ async function invoice(roomId, p, commit) {
           "Hóa đơn tiền phòng mới",
           `${room.name} · ${p}: ${bill.total.toLocaleString("vi-VN")}đ. Hạn ${bill.dueDate}`,
           {
+            ownerId,
             audience: "tenant",
             recipientUid: bill.recipientUid,
             invoiceId: billId,
@@ -782,15 +1176,15 @@ async function invoice(roomId, p, commit) {
   });
 }
 
-async function runBilling() {
+async function runBilling(ownerId) {
   const day = B.today(),
     p = day.slice(0, 7);
-  const config = (await ref("settings", "landlord").get()).data() || {};
+  const config = (await ref("settings", ownerId).get()).data() || {};
   let created = 0,
     existing = 0,
     blocked = 0,
     late = 0;
-  const cs = await db.collection("contracts").get();
+  const cs = await db.collection("contracts").where("ownerId", "==", ownerId).get();
   for (const doc of cs.docs) {
     const c = doc.data();
     if (c.status === "scheduled" && c.startDate <= day && c.endDate >= day)
@@ -808,15 +1202,19 @@ async function runBilling() {
       continue;
     if (!config.autoBilling) continue;
     try {
-      const r = (await ref("rooms", c.roomId).get()).data();
-      if (!r || r.archived) continue;
+      const roomData = (await ref("rooms", c.roomId).get()).data();
+      if (!roomData || roomData.archived) continue;
+      const r = owned(roomData, ownerId, "Phòng");
       const bday = parseInt(r.billingDay, 10);
       if (day < B.billingDate(p, bday)) continue;
-      const result = await invoice(c.roomId, p, true);
+      const result = await invoice(ownerId, c.roomId, p, true);
       result.existing ? existing++ : created++;
     } catch (e) {
       blocked++;
-      const nref = ref("notifications", `billing_blocked_${doc.id}_${p}`);
+      const nref = ref(
+        "notifications",
+        `billing_blocked_${doc.id}_${p}`,
+      );
       await db.runTransaction(async (tx) => {
         if ((await tx.get(nref)).exists) return;
         notify(
@@ -824,13 +1222,14 @@ async function runBilling() {
           nref.id,
           "Chưa xuất được hóa đơn",
           `${c.roomName || c.roomId}: ${e.message}`,
-          { roomId: c.roomId },
+          { ownerId, roomId: c.roomId },
         );
       });
     }
   }
   const bs = await db
     .collection("invoices")
+    .where("ownerId", "==", ownerId)
     .where("status", "in", ["unpaid", "reported"])
     .get();
   for (const doc of bs.docs) {
@@ -848,7 +1247,7 @@ async function runBilling() {
         nref.id,
         "Hóa đơn quá hạn hơn 5 ngày",
         `${b.roomName} · ${b.period}: ${b.total.toLocaleString("vi-VN")}đ`,
-        { invoiceId: doc.id },
+        { ownerId, invoiceId: doc.id },
       );
       return true;
     });
@@ -863,6 +1262,10 @@ async function runBilling() {
     autoBilling: config.autoBilling === true,
   };
 }
+async function runScheduledBilling() {
+  const managers = await db.collection("managers").where("enabled", "==", true).get();
+  for (const managerDoc of managers.docs) await runBilling(managerDoc.id);
+}
 exports.billingHourly = onSchedule(
   {
     schedule: "0 * * * *",
@@ -870,7 +1273,7 @@ exports.billingHourly = onSchedule(
     timeoutSeconds: 540,
     retryCount: 3,
   },
-  runBilling,
+  runScheduledBilling,
 );
 
 // Thông báo trong app là dữ liệu chính; FCM gửi thêm tới thiết bị đã đăng ký token.
@@ -880,11 +1283,7 @@ exports.pushNotification = onDocumentCreated(
     const n = event.data?.data();
     if (!n) return;
     const owners =
-      n.audience === "tenant"
-        ? [n.recipientUid]
-        : (
-            await db.collection("managers").where("enabled", "==", true).get()
-          ).docs.map((x) => x.id);
+      n.audience === "tenant" ? [n.recipientUid] : [n.ownerId];
     let sent = 0;
     for (const uid of owners.filter(Boolean)) {
       const tokens = await db
@@ -932,10 +1331,79 @@ exports.pushNotification = onDocumentCreated(
   },
 );
 
+async function migrateServiceIds(ownerId) {
+  const services = await db
+    .collection("services")
+    .where("ownerId", "==", ownerId)
+    .get();
+  const needingId = services.docs.filter((doc) => doc.data().id !== doc.id);
+  for (let offset = 0; offset < needingId.length; offset += 450) {
+    const batch = db.batch();
+    for (const doc of needingId.slice(offset, offset + 450))
+      batch.update(doc.ref, { id: doc.id });
+    await batch.commit();
+  }
+  return { ownerId, updated: needingId.length };
+}
+
+async function migrateOwnerData(ownerId) {
+  const migrationRef = ref("system", "ownerMigration");
+  await db.runTransaction(async (tx) => {
+    const migration = await tx.get(migrationRef);
+    if (migration.exists && migration.data().ownerId !== ownerId)
+      throw new Error("Dữ liệu cũ đã được gán cho một tài khoản chủ trọ khác");
+    if (!migration.exists)
+      tx.create(migrationRef, {
+        ownerId,
+        startedAt: stamp(),
+      });
+  });
+
+  const collections = [
+    "rooms",
+    "tenants",
+    "services",
+    "meters",
+    "contracts",
+    "extras",
+    "maintenance",
+    "invoices",
+    "notifications",
+  ];
+  const migrated = {};
+  for (const collection of collections) {
+    const snapshot = await db.collection(collection).get();
+    const unowned = snapshot.docs.filter((doc) => !doc.data().ownerId);
+    migrated[collection] = unowned.length;
+    for (let offset = 0; offset < unowned.length; offset += 450) {
+      const batch = db.batch();
+      for (const doc of unowned.slice(offset, offset + 450))
+        batch.update(doc.ref, { ownerId });
+      await batch.commit();
+    }
+  }
+
+  migrated.serviceIds = (await migrateServiceIds(ownerId)).updated;
+
+  const oldSettings = await ref("settings", "landlord").get();
+  const newSettings = ref("settings", ownerId);
+  await db.runTransaction(async (tx) => {
+    const current = await tx.get(newSettings);
+    if (!current.exists && oldSettings.exists)
+      tx.create(newSettings, { ...oldSettings.data(), ownerId });
+    else if (current.exists && !current.data().ownerId)
+      tx.update(newSettings, { ownerId });
+  });
+  await migrationRef.update({ completedAt: stamp(), migrated });
+  return { ownerId, migrated };
+}
+
 // Chạy dry-run trước; chỉ chuẩn hóa trường/quan hệ xác định được, giữ dữ liệu cũ.
-async function migrateLegacy(apply) {
+async function migrateLegacy(ownerId, apply) {
   const [rs, ts, cs] = await Promise.all(
-    ["rooms", "tenants", "contracts"].map((x) => db.collection(x).get()),
+    ["rooms", "tenants", "contracts"].map((x) =>
+      db.collection(x).where("ownerId", "==", ownerId).get(),
+    ),
   );
   const rooms = rs.docs.map(value),
     tenants = ts.docs.map(value);
@@ -985,7 +1453,7 @@ async function migrateLegacy(apply) {
     });
     if (apply)
       await ref("rooms", r._id).set(
-        { ...patch, updatedAt: stamp() },
+        { ...patch, ownerId, updatedAt: stamp() },
         { merge: true },
       );
   }
@@ -1000,7 +1468,7 @@ async function migrateLegacy(apply) {
     }
     if (apply)
       await ref("tenants", t._id).set(
-        { roomId: room[0]._id, archived: false },
+        { ownerId, roomId: room[0]._id, archived: false },
         { merge: true },
       );
     changes.push({
@@ -1046,6 +1514,7 @@ async function migrateLegacy(apply) {
       rent: Number(c.rent),
       deposit: Number(c.deposit),
       recipientUid: tenant[0].authUid || "",
+      ownerId,
     };
     if (
       !Number.isFinite(patch.rent) ||
@@ -1063,7 +1532,7 @@ async function migrateLegacy(apply) {
     if (apply) await ref("contracts", c._id).set(patch, { merge: true });
   }
   if (apply) {
-    const all = await db.collection("tenants").get();
+    const all = await db.collection("tenants").where("ownerId", "==", ownerId).get();
     for (const r of rooms)
       await ref("rooms", r._id).update({
         people: all.docs.filter(

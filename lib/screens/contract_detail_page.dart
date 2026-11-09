@@ -4,6 +4,8 @@ import '../models/record.dart';
 import '../services/document_service.dart';
 import '../widgets/common.dart';
 import 'contract_edit_page.dart';
+import 'room_detail_page.dart';
+import 'tenant_detail_page.dart';
 
 String _formatDateVi(String iso) {
   final parts = iso.split('-');
@@ -15,29 +17,12 @@ class ContractDetailPage extends StatelessWidget {
   final String contractId;
   const ContractDetailPage({super.key, required this.contractId});
 
-  void _openEditOrRenew(BuildContext context, Record c) {
-    if (c.text('status') == 'scheduled') {
-      openPage(context, ContractEditPage(contract: c));
-    } else {
-      openPage(
-        context,
-        ContractEditPage(
-          initialRoomId: c.text('roomId'),
-          initialTenantId: c.text('tenantId'),
-        ),
-      );
-    }
-  }
-
   Widget _contactRow(IconData icon, String title, String value) => Row(
     children: [
       Container(
         width: 40,
         height: 40,
-        decoration: const BoxDecoration(
-          color: canvas,
-          shape: BoxShape.circle,
-        ),
+        decoration: const BoxDecoration(color: canvas, shape: BoxShape.circle),
         child: Icon(icon, size: 19, color: muted),
       ),
       const SizedBox(width: 12),
@@ -127,6 +112,24 @@ class ContractDetailPage extends StatelessWidget {
             final tenant = tenants
                 .where((t) => t.id == c.text('tenantId'))
                 .firstOrNull;
+            final contractTenants =
+                tenants
+                    .where(
+                      (t) =>
+                          !t.archived &&
+                          (t.id == c.text('tenantId') ||
+                              c.strings('tenantIds').contains(t.id) ||
+                              (c.text('roomId').isNotEmpty &&
+                                  t.text('roomId') == c.text('roomId'))),
+                    )
+                    .toList()
+                  ..sort(
+                    (a, b) => a.id == c.text('tenantId')
+                        ? -1
+                        : b.id == c.text('tenantId')
+                        ? 1
+                        : a.name.compareTo(b.name),
+                  );
             final room = rooms
                 .where((r) => r.id == c.text('roomId'))
                 .firstOrNull;
@@ -142,15 +145,25 @@ class ContractDetailPage extends StatelessWidget {
 
             final status = c.text('status');
             final canEnd = ['active', 'scheduled'].contains(status);
-            final tenantName = c.text(
-              'tenantName',
-              tenant?.name ?? c.text('name'),
-            );
-            final roomName = c.text('roomName', room?.name ?? c.text('room'));
+            final tenantName =
+                tenant?.name ?? c.text('tenantName', c.text('name'));
+            final tenantPhone =
+                tenant?.text('phone') ?? c.text('tenantPhone');
+            final tenantEmail =
+                tenant?.text('email') ?? c.text('tenantEmail');
+            final tenantIdentity =
+                tenant?.text('identity') ?? c.text('tenantIdentity');
+            final roomName = room?.name ?? c.text('roomName', c.text('room'));
             final startText = _formatDateVi(
               c.text('startDate', c.text('start')),
             );
             final endText = _formatDateVi(c.text('endDate', c.text('end')));
+            final initElectric =
+                c.number('initialElectric') ??
+                room?.number('initialElectric') ??
+                0;
+            final initWater =
+                c.number('initialWater') ?? room?.number('initialWater') ?? 0;
 
             return Scaffold(
               backgroundColor: canvas,
@@ -174,45 +187,32 @@ class ContractDetailPage extends StatelessWidget {
                   ),
                 ),
                 actions: [
-                  Center(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => _openEditOrRenew(context, c),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 15,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: softBlue,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          status == 'scheduled' ? 'Chỉnh sửa' : 'Gia hạn',
-                          style: const TextStyle(
-                            color: blue,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
+                  moreActionsMenu(
+                    iconColor: ink,
+                    onEdit: () =>
+                        openPage(context, ContractEditPage(contract: c)),
+                    onDelete: () async {
+                      if (await confirm(
+                            context,
+                            'Xóa hợp đồng ${c.text('number', c.id)}? Phòng sẽ trở về trạng thái Trống.',
+                          ) &&
+                          context.mounted) {
+                        await perform(
+                          context,
+                          () => store.command('deleteContract', id: contractId),
+                          'Đã xóa hợp đồng',
+                        );
+                        if (context.mounted) Navigator.pop(context);
+                      }
+                    },
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 8),
                 ],
               ),
               body: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                 children: [
-                  if (c.text('roomId').isEmpty || c.text('tenantId').isEmpty)
-                    box(
-                      const Text(
-                        'Hợp đồng cũ chưa liên kết đủ dữ liệu. Đối chiếu dữ liệu cũ và tạo hợp đồng chuẩn mới nếu thiếu liên kết.',
-                        style: TextStyle(color: muted, fontSize: 12.5),
-                      ),
-                    ),
-
-                  // 1. Summary Card (Frame 9)
+                  // 1. Summary Card
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -252,19 +252,19 @@ class ContractDetailPage extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 3),
                                   Text(
-                                    tenantName,
+                                    'Trưởng phòng: $tenantName',
                                     style: const TextStyle(
                                       color: Color(0xFF232D40),
-                                      fontSize: 12,
+                                      fontSize: 12.5,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'Phòng : $roomName',
+                                    'Phòng: $roomName',
                                     style: const TextStyle(
                                       color: Color(0xFF232D40),
-                                      fontSize: 12,
+                                      fontSize: 12.5,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -283,42 +283,22 @@ class ContractDetailPage extends StatelessWidget {
                           padding: EdgeInsets.symmetric(vertical: 12),
                           child: Divider(height: 1, color: line),
                         ),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.calendar_today_outlined,
-                              size: 15,
-                              color: muted,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                '$startText - $endText',
-                                style: const TextStyle(
-                                  color: ink,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              (c.number('deposit') ?? 0) > 0
-                                  ? 'Đã đặt cọc'
-                                  : 'Chưa cọc',
-                              style: const TextStyle(
-                                color: ink,
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
+                        info(
+                          'Ngày bắt đầu hợp đồng',
+                          '$startText (${c.text('startDate')})',
+                          boldValue: true,
+                        ),
+                        info(
+                          'Ngày kết thúc hợp đồng',
+                          '$endText (${c.text('endDate')})',
+                          boldValue: true,
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 14),
 
-                  // 2. Tenant Info Card (Frame 9)
+                  // 2. Tenant Info Card
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -329,15 +309,29 @@ class ContractDetailPage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Thông tin người thuê',
-                          style: TextStyle(
-                            color: ink,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Thông tin người thuê (Đại diện & Thành viên)',
+                                style: TextStyle(
+                                  color: ink,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (tenant != null)
+                              TextButton(
+                                onPressed: () => openPage(
+                                  context,
+                                  TenantDetailPage(tenantId: tenant.id),
+                                ),
+                                child: const Text('Hồ sơ →'),
+                              ),
+                          ],
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 10),
                         Row(
                           children: [
                             initialAvatar(
@@ -348,13 +342,37 @@ class ContractDetailPage extends StatelessWidget {
                             ),
                             const SizedBox(width: 12),
                             Expanded(
-                              child: Text(
-                                tenantName,
-                                style: const TextStyle(
-                                  color: ink,
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    tenantName,
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: softBlue,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Text(
+                                      'Trưởng phòng (Đại diện hợp đồng)',
+                                      style: TextStyle(
+                                        color: blue,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -366,7 +384,7 @@ class ContractDetailPage extends StatelessWidget {
                         _contactRow(
                           Icons.phone_outlined,
                           'Số điện thoại',
-                          tenant?.text('phone') ?? '',
+                          tenantPhone,
                         ),
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 12),
@@ -375,7 +393,7 @@ class ContractDetailPage extends StatelessWidget {
                         _contactRow(
                           Icons.mark_email_unread_outlined,
                           'Email',
-                          tenant?.text('email') ?? '',
+                          tenantEmail,
                         ),
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 12),
@@ -383,95 +401,169 @@ class ContractDetailPage extends StatelessWidget {
                         ),
                         _contactRow(
                           Icons.badge_outlined,
-                          'CCCD',
-                          tenant?.text('identity') ?? '',
+                          'CCCD / Passport',
+                          tenantIdentity,
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  // 3. Room Info Card (Frame 9)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: line),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Thông tin phòng',
-                          style: TextStyle(
-                            color: ink,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
+                        if (tenant != null &&
+                            (tenant.text('cccdFrontUrl').isNotEmpty ||
+                                tenant.text('cccdBackUrl').isNotEmpty)) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => showCccdFullDialog(
+                                    context,
+                                    'CCCD Mặt trước - $tenantName',
+                                    tenant.text('cccdFrontUrl'),
+                                  ),
+                                  child: cccdImageWidget(
+                                    tenant.text('cccdFrontUrl'),
+                                    height: 85,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => showCccdFullDialog(
+                                    context,
+                                    'CCCD Mặt sau - $tenantName',
+                                    tenant.text('cccdBackUrl'),
+                                  ),
+                                  child: cccdImageWidget(
+                                    tenant.text('cccdBackUrl'),
+                                    height: 85,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: const BoxDecoration(
-                                color: canvas,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.meeting_room_outlined,
-                                size: 20,
-                                color: muted,
-                              ),
+                        ],
+                        if (contractTenants.isNotEmpty) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Divider(height: 1, color: line),
+                          ),
+                          Text(
+                            'Danh sách thành viên trong phòng (${contractTenants.length})',
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Phòng : $roomName',
-                                    style: const TextStyle(
-                                      color: ink,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
+                          ),
+                          const SizedBox(height: 8),
+                          for (final person in contractTenants)
+                            InkWell(
+                              onTap: () => openPage(
+                                context,
+                                TenantDetailPage(tenantId: person.id),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 5,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${person.name} (${person.text('phone')})',
+                                        style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    room == null
-                                        ? 'Chưa cập nhật diện tích'
-                                        : 'Diện tích: ${room.number('area') ?? '—'} m²  •  Tối đa ${room.number('capacity') ?? '—'} người',
-                                    style: const TextStyle(
-                                      color: muted,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  if (room != null &&
-                                      room.text('description').isNotEmpty) ...[
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      room.text('description'),
-                                      style: const TextStyle(
-                                        color: muted,
-                                        fontSize: 13,
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: person.id == c.text('tenantId')
+                                            ? softBlue
+                                            : const Color(0xFFECFDF3),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        person.id == c.text('tenantId')
+                                            ? 'Trưởng phòng'
+                                            : 'Thành viên',
+                                        style: TextStyle(
+                                          color: person.id == c.text('tenantId')
+                                              ? blue
+                                              : const Color(0xFF16A34A),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ),
                                   ],
-                                ],
+                                ),
                               ),
                             ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 3. Room & Initial Meter Readings Card
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: line),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Thông tin phòng & Chỉ số đầu kỳ',
+                                style: TextStyle(
+                                  color: ink,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (room != null)
+                              TextButton(
+                                onPressed: () => openPage(
+                                  context,
+                                  RoomDetailPage(roomId: room.id),
+                                ),
+                                child: const Text('Xem phòng →'),
+                              ),
                           ],
+                        ),
+                        const SizedBox(height: 8),
+                        _priceLine('Phòng', roomName),
+                        if (room != null)
+                          _priceLine(
+                            'Diện tích / Sức chứa',
+                            '${room.number('area') ?? '—'} m² • Tối đa ${room.number('capacity') ?? '—'} người',
+                          ),
+                        _priceLine(
+                          'Chỉ số điện ban đầu (lúc làm HĐ)',
+                          '$initElectric kWh',
+                        ),
+                        _priceLine(
+                          'Chỉ số nước ban đầu (lúc làm HĐ)',
+                          '$initWater m³',
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 14),
 
-                  // 4. Payment & Services Card (Frame 9)
+                  // 4. Payment & Services Card
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -483,7 +575,7 @@ class ContractDetailPage extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Thông tin thanh toán & Phí dịch vụ khác',
+                          'Thông tin thanh toán & Phí dịch vụ',
                           style: TextStyle(
                             color: ink,
                             fontSize: 15.5,
@@ -501,12 +593,13 @@ class ContractDetailPage extends StatelessWidget {
                               ? '${money(c.data['deposit'])} (Đã thanh lý)'
                               : money(c.data['deposit']),
                         ),
-                        _priceLine('Kỳ thanh toán', 'Đóng 1 tháng/lần'),
                         _priceLine(
-                          'Ngày thanh toán',
-                          room != null && room.text('billingDay').isNotEmpty
-                              ? 'Ngày ${room.text('billingDay')} hàng tháng'
-                              : 'Hàng tháng',
+                          'Ngày bắt đầu hợp đồng',
+                          c.text('startDate'),
+                        ),
+                        _priceLine(
+                          'Ngày kết thúc hợp đồng',
+                          c.text('endDate'),
                         ),
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 10),
@@ -556,7 +649,7 @@ class ContractDetailPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
 
-                  // 5. Actions Card (Frame 9)
+                  // 5. Actions Card
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -576,21 +669,9 @@ class ContractDetailPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        _actionButton(
-                          label: 'Gia hạn hợp đồng',
-                          color: blue,
-                          onTap: () => openPage(
-                            context,
-                            ContractEditPage(
-                              initialRoomId: c.text('roomId'),
-                              initialTenantId: c.text('tenantId'),
-                            ),
-                          ),
-                        ),
                         if (canEnd) ...[
-                          const SizedBox(height: 10),
                           _actionButton(
-                            label: 'Kết thúc hợp đồng',
+                            label: 'Kết thúc / Thanh lý hợp đồng',
                             color: ink,
                             onTap: () async {
                               if (await confirm(
@@ -608,16 +689,40 @@ class ContractDetailPage extends StatelessWidget {
                               }
                             },
                           ),
+                          const SizedBox(height: 10),
                         ],
-                        const SizedBox(height: 10),
-                        _actionButton(
-                          label: 'Xuất File PDF',
-                          color: const Color(0xFFDC2626),
-                          onTap: () => perform(
-                            context,
-                            () => DocumentService.printRecord(c, contract: true),
-                            'Đã mở bản in',
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _actionButton(
+                                label: 'In / Xuất PDF',
+                                color: const Color(0xFFDC2626),
+                                onTap: () => perform(
+                                  context,
+                                  () => DocumentService.printRecord(
+                                    c,
+                                    contract: true,
+                                  ),
+                                  'Đã mở bản in',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _actionButton(
+                                label: 'Chia sẻ PDF',
+                                color: blue,
+                                onTap: () => perform(
+                                  context,
+                                  () => DocumentService.shareRecord(
+                                    c,
+                                    contract: true,
+                                  ),
+                                  'Đã mở chia sẻ hợp đồng',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

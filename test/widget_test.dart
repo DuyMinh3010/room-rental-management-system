@@ -8,23 +8,52 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:capstone1/main.dart';
+import 'package:capstone1/screens/login_page.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('login page renders', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('RRMS'), findsOneWidget);
+    expect(find.text('Đăng nhập'), findsWidgets);
+    expect(find.text('Đăng nhập với vai trò'), findsOneWidget);
+    expect(find.text('Chủ trọ'), findsOneWidget);
+    expect(find.text('Người thuê'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+  testWidgets('login role can be selected before entering credentials', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    await tester.tap(find.text('Chủ trọ'));
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsNothing);
+  });
+
+  testWidgets('login requires selecting a role', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.pump();
+
+    expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsOneWidget);
+  });
+
+  testWidgets('login validation is shown under each field', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    await tester.tap(find.text('Người thuê'));
+    await tester.pump();
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Vui lòng nhập email'), findsOneWidget);
+    expect(find.text('Vui lòng nhập mật khẩu'), findsOneWidget);
   });
 }

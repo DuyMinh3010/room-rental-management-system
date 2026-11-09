@@ -6,7 +6,7 @@ import 'package:printing/printing.dart';
 import '../models/record.dart';
 
 class DocumentService {
-  static Future<void> printRecord(
+  static Future<pw.Document> _buildDocument(
     Record record, {
     required bool contract,
   }) async {
@@ -17,6 +17,15 @@ class DocumentService {
       theme: pw.ThemeData.withFont(base: font, bold: font),
     );
     final d = record.data;
+    final paidTimeText = record.text('paidDateTime').isNotEmpty
+        ? record.text('paidDateTime')
+        : formatDateTimeVi(record.time('paidAt'), record.text('paidDate'));
+    final collectDeposit = d['collectDeposit'] == true;
+    final depositAmt = record.number('depositCollectedAmount') ?? 0;
+    final invoiceNote = record
+        .text('invoiceNote', record.text('paymentNote'))
+        .trim();
+
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -31,14 +40,22 @@ class DocumentService {
           pw.SizedBox(height: 12),
           pw.Text('Phòng: ${record.text('roomName', record.text('room'))}'),
           pw.Text(
-            'Người thuê: ${record.text('tenantName', record.text('name'))}',
+            'Người đại diện (Trưởng phòng): ${record.text('tenantName', record.text('name'))}',
           ),
+          if (record.text('tenantPhone').isNotEmpty)
+            pw.Text('Số điện thoại: ${record.text('tenantPhone')}'),
+          if (record.text('tenantIdentity').isNotEmpty)
+            pw.Text('CCCD/Passport: ${record.text('tenantIdentity')}'),
           if (contract) ...[
-            pw.Text(
-              'Thời hạn: ${record.text('startDate')} đến ${record.text('endDate')}',
-            ),
+            pw.SizedBox(height: 8),
+            pw.Text('Ngày bắt đầu hợp đồng: ${record.text('startDate')}'),
+            pw.Text('Ngày kết thúc hợp đồng: ${record.text('endDate')}'),
             pw.Text('Tiền phòng: ${money(d['rent'])}/tháng'),
             pw.Text('Tiền cọc: ${money(d['deposit'])}'),
+            if (d['initialElectric'] != null || d['initialWater'] != null)
+              pw.Text(
+                'Chỉ số ban đầu lúc làm hợp đồng: Điện ${d['initialElectric'] ?? 0} kWh · Nước ${d['initialWater'] ?? 0} m³',
+              ),
             pw.SizedBox(height: 16),
             pw.Text('Điều khoản / ghi chú: ${record.text('note')}'),
             pw.SizedBox(height: 40),
@@ -73,7 +90,14 @@ class DocumentService {
             pw.SizedBox(height: 16),
             pw.Text('Tổng cộng: ${money(d['total'])}'),
             pw.Text('Trạng thái: ${label(record.text('status'))}'),
+            if (record.text('status') == 'paid' && paidTimeText.isNotEmpty)
+              pw.Text('Ngày giờ thanh toán: $paidTimeText'),
+            if (collectDeposit || depositAmt > 0)
+              pw.Text('Thu tiền cọc: Đã thu (${money(depositAmt)})'),
+            if (invoiceNote.isNotEmpty)
+              pw.Text('Ghi chú hóa đơn: $invoiceNote'),
             if (d['bank'] is Map) ...[
+              pw.SizedBox(height: 8),
               pw.Text('Ngân hàng: ${d['bank']['name'] ?? ''}'),
               pw.Text('Số tài khoản: ${d['bank']['account'] ?? ''}'),
               pw.Text('Chủ tài khoản: ${d['bank']['holder'] ?? ''}'),
@@ -82,9 +106,71 @@ class DocumentService {
         ],
       ),
     );
+    return doc;
+  }
+
+  static Future<void> printRecord(
+    Record record, {
+    required bool contract,
+  }) async {
+    final doc = await _buildDocument(record, contract: contract);
     await Printing.layoutPdf(
       name: '${contract ? 'hop-dong' : 'hoa-don'}-${record.id}.pdf',
       onLayout: (_) => doc.save(),
     );
+  }
+
+  static Future<void> shareRecord(
+    Record record, {
+    required bool contract,
+  }) async {
+    final doc = await _buildDocument(record, contract: contract);
+    final bytes = await doc.save();
+    await Printing.sharePdf(
+      bytes: bytes,
+      filename: '${contract ? 'hop-dong' : 'hoa-don'}-${record.id}.pdf',
+    );
+  }
+
+  static String formatInvoiceText(Record record) {
+    final d = record.data;
+    final lines = (d['lines'] as List? ?? []).whereType<Map>().toList();
+    final paidTimeText = record.text('paidDateTime').isNotEmpty
+        ? record.text('paidDateTime')
+        : formatDateTimeVi(record.time('paidAt'), record.text('paidDate'));
+    final collectDeposit = d['collectDeposit'] == true;
+    final depositAmt = record.number('depositCollectedAmount') ?? 0;
+    final invoiceNote = record
+        .text('invoiceNote', record.text('paymentNote'))
+        .trim();
+    final buf = StringBuffer()
+      ..writeln('=== HÓA ĐƠN TIỀN PHÒNG ===')
+      ..writeln('Mã HĐ: ${record.text('code', record.id)}')
+      ..writeln('Phòng: ${record.text('roomName', record.id)}')
+      ..writeln('Người đại diện: ${record.text('tenantName')}')
+      ..writeln('Kỳ thanh toán: ${record.text('period')}')
+      ..writeln(
+        'Ngày phát hành: ${record.text('issueDate')} - Hạn: ${record.text('dueDate')}',
+      )
+      ..writeln('--------------------------');
+    for (final row in lines) {
+      buf.writeln(
+        '- ${row['name']}: ${row['quantity']} x ${money(row['unitPrice'])} = ${money(row['amount'])}',
+      );
+    }
+    buf
+      ..writeln('--------------------------')
+      ..writeln('TỔNG CỘNG: ${money(d['total'])}')
+      ..writeln('Trạng thái: ${label(record.text('status'))}');
+    if (record.text('status') == 'paid' && paidTimeText.isNotEmpty) {
+      buf.writeln('Ngày giờ thanh toán: $paidTimeText');
+    }
+    if (collectDeposit || depositAmt > 0) {
+      buf.writeln('Thu tiền cọc: ${money(depositAmt)}');
+    }
+    if (invoiceNote.isNotEmpty) {
+      buf.writeln('Ghi chú: $invoiceNote');
+    }
+    return buf.toString().trim();
   }
 }

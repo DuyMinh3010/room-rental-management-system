@@ -1,7 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../models/record.dart';
 import '../widgets/common.dart';
 import 'room_page.dart';
 import 'tenant_list_page.dart';
@@ -11,7 +10,7 @@ import 'contract_page.dart';
 import 'maintenance_page.dart';
 import 'account_page.dart';
 import 'notification_page.dart';
-import 'invoice_detail_page.dart';
+import 'tenant_portal_content.dart';
 
 class AppShell extends StatefulWidget {
   final bool landlord;
@@ -22,7 +21,11 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int index = 0;
+  int tenantIndex = 0;
   bool checking = false;
+  bool tenantLinking = false;
+  Future<Map<String, dynamic>>? tenantPortalFuture;
+  Future<Map<String, dynamic>>? tenantLookupFuture;
   @override
   void initState() {
     super.initState();
@@ -59,7 +62,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final pages = [
       const RoomPage(),
       const TenantListPage(),
-      const ServicePage(),
+      ServicePage(onNavigate: (v) => setState(() => index = v)),
       const InvoicePage(),
       const ContractPage(),
       const MaintenancePage(),
@@ -78,9 +81,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Widget _tenantView(BuildContext context) => Scaffold(
     backgroundColor: canvas,
     appBar: AppBar(
-      title: const Text('Hóa đơn của tôi'),
+      title: Text(tenantTabLabels[tenantIndex]),
       actions: [
         const NotificationButton(landlord: false),
+        if (FirebaseAuth.instance.currentUser?.emailVerified == true)
+          IconButton(
+            tooltip: 'Làm mới dữ liệu',
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: tenantPortalFuture == null
+                ? null
+                : () =>
+                      setState(() => tenantPortalFuture = store.tenantPortal()),
+          ),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           onPressed: () async {
@@ -89,60 +101,237 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       ],
     ),
-    body: RecordsView(
-      collection: 'invoices',
-      field: 'recipientUid',
-      equals: store.uid,
-      builder: (_, all) => ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          box(
-            const Text(
-              'Nếu bạn là chủ trọ, UID cần có trong managers với enabled = true. Nếu là người thuê, nhờ chủ trọ liên kết UID tài khoản vào hồ sơ người thuê.',
-              style: TextStyle(color: muted, fontSize: 12.5),
-            ),
+    body: FirebaseAuth.instance.currentUser?.emailVerified == true
+        ? _tenantProfile(context)
+        : ListView(
+            padding: const EdgeInsets.all(16),
+            children: [_emailVerificationCard(context)],
           ),
-          if (all.isEmpty) empty('Chưa có hóa đơn được gửi cho tài khoản này'),
-          for (final b in all)
-            Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: line, width: 0.7),
-              ),
-              child: ListTile(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 6,
-                ),
-                title: Text(
-                  '${b.text('roomName')} · ${b.text('period')}',
-                  style: const TextStyle(
-                    color: ink,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '${money(b.data['total'])}  •  Hạn: ${b.text('dueDate')}',
-                    style: const TextStyle(color: muted, fontSize: 12),
-                  ),
-                ),
-                trailing: statusPill(b.text('status')),
-                onTap: () => openPage(
-                  context,
-                  InvoiceDetailPage(invoiceId: b.id, landlord: false),
-                ),
-              ),
+    bottomNavigationBar:
+        FirebaseAuth.instance.currentUser?.emailVerified == true
+        ? TenantPortalBottomBar(
+            selectedIndex: tenantIndex,
+            onTap: (value) => setState(() => tenantIndex = value),
+          )
+        : null,
+  );
+
+  Widget _emailVerificationCard(BuildContext context) => box(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Xác minh email để liên kết hồ sơ thuê',
+          style: TextStyle(
+            color: ink,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Tài khoản: ${FirebaseAuth.instance.currentUser?.email ?? ''}',
+          style: const TextStyle(color: muted, fontSize: 12),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Mở email xác minh do Firebase gửi. Sau khi xác minh, quay lại ứng dụng và bấm nút bên dưới.',
+          style: TextStyle(color: muted, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            TextButton(
+              onPressed: () async {
+                try {
+                  await FirebaseAuth.instance.currentUser
+                      ?.sendEmailVerification();
+                  if (context.mounted) {
+                    message(context, 'Đã gửi lại email xác minh');
+                  }
+                } catch (error) {
+                  if (context.mounted) message(context, errorText(error));
+                }
+              },
+              child: const Text('Gửi lại email xác minh'),
             ),
-        ],
-      ),
+            FilledButton.tonal(
+              onPressed: () async {
+                try {
+                  await FirebaseAuth.instance.currentUser?.reload();
+                  await FirebaseAuth.instance.currentUser?.getIdToken(true);
+                  if (context.mounted) setState(() {});
+                  if (FirebaseAuth.instance.currentUser?.emailVerified !=
+                          true &&
+                      context.mounted) {
+                    message(context, 'Email chưa được xác minh');
+                  }
+                } catch (error) {
+                  if (context.mounted) message(context, errorText(error));
+                }
+              },
+              child: const Text('Tôi đã xác minh'),
+            ),
+          ],
+        ),
+      ],
     ),
   );
+
+  Widget _tenantProfile(BuildContext context) {
+    final email = FirebaseAuth.instance.currentUser!.email!
+        .trim()
+        .toLowerCase();
+    tenantLookupFuture ??= store.tenantPortal(action: 'lookup');
+    return FutureBuilder<Map<String, dynamic>>(
+      future: tenantLookupFuture,
+      builder: (context, lookup) {
+        if (lookup.hasError) {
+          return _tenantMessageCard(
+            title: 'Không kiểm tra được hồ sơ thuê',
+            detail:
+                '${errorText(lookup.error)}\nHãy thử lại. Nếu lỗi tiếp tục, quản trị viên cần triển khai Cloud Functions mới nhất.',
+            action: TextButton.icon(
+              onPressed: () => setState(
+                () => tenantLookupFuture = store.tenantPortal(action: 'lookup'),
+              ),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Thử lại'),
+            ),
+          );
+        }
+        if (!lookup.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final profiles = (lookup.data!['profiles'] as List? ?? const [])
+            .whereType<Map>()
+            .map((profile) => Map<String, dynamic>.from(profile))
+            .toList();
+        if (profiles.isEmpty) {
+          return _tenantMessageCard(
+            title: 'Chưa tìm thấy hồ sơ thuê',
+            detail:
+                'Đang đăng nhập bằng $email. Hãy nhờ chủ trọ kiểm tra hồ sơ còn hoạt động, gán phòng và nhập đúng email đăng nhập này.',
+          );
+        }
+        if (profiles.length > 1) {
+          return _tenantMessageCard(
+            title: 'Email này trùng trên nhiều hồ sơ',
+            detail:
+                'Hãy nhờ chủ trọ kiểm tra và giữ email đăng nhập trên đúng một hồ sơ thuê.',
+          );
+        }
+
+        final tenant = profiles.single;
+        final tenantId = '${tenant['id'] ?? ''}';
+        final linkedUid = '${tenant['authUid'] ?? ''}';
+        if (linkedUid == store.uid) {
+          tenantPortalFuture ??= store.tenantPortal();
+          return FutureBuilder<Map<String, dynamic>>(
+            future: tenantPortalFuture,
+            builder: (_, snapshot) {
+              if (snapshot.hasError) {
+                return _tenantMessageCard(
+                  title: 'Chưa tải được thông tin thuê',
+                  detail: errorText(snapshot.error),
+                  action: TextButton.icon(
+                    onPressed: () => setState(
+                      () => tenantPortalFuture = store.tenantPortal(),
+                    ),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Thử lại'),
+                  ),
+                );
+              }
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return TenantPortalContent(
+                index: tenantIndex,
+                data: snapshot.data!,
+                onNavigate: (value) => setState(() => tenantIndex = value),
+                onRefresh: () =>
+                    setState(() => tenantPortalFuture = store.tenantPortal()),
+              );
+            },
+          );
+        }
+
+        return _tenantMessageCard(
+          title: 'Xác nhận hồ sơ thuê của bạn',
+          detail: linkedUid.isEmpty
+              ? '${tenant['name'] ?? ''} · ${tenant['email'] ?? email}'
+              : 'Hồ sơ này đã liên kết với tài khoản khác. Hãy liên hệ chủ trọ để kiểm tra.',
+          action: linkedUid.isEmpty
+              ? FilledButton.icon(
+                  onPressed: tenantLinking
+                      ? null
+                      : () => _linkTenantByEmail(context, tenantId),
+                  icon: tenantLinking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link_rounded, size: 18),
+                  label: Text(
+                    tenantLinking ? 'Đang liên kết...' : 'Liên kết bằng email',
+                  ),
+                )
+              : null,
+        );
+      },
+    );
+  }
+
+  Widget _tenantMessageCard({
+    required String title,
+    required String detail,
+    Widget? action,
+  }) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      box(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: ink,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(detail, style: const TextStyle(color: muted, fontSize: 12)),
+            if (action != null) ...[const SizedBox(height: 8), action],
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Future<void> _linkTenantByEmail(BuildContext context, String tenantId) async {
+    setState(() => tenantLinking = true);
+    try {
+      final result = await store.linkCurrentTenantByEmail(tenantId);
+      if (!context.mounted) return;
+      setState(() {
+        tenantPortalFuture = store.tenantPortal();
+        tenantLookupFuture = store.tenantPortal(action: 'lookup');
+      });
+      message(
+        context,
+        'Đã liên kết hồ sơ ${result['tenantName']}. Hãy nhờ chủ trọ gửi lại các hóa đơn đã tạo trước đó.',
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      message(context, errorText(error));
+    } finally {
+      if (mounted) setState(() => tenantLinking = false);
+    }
+  }
 }

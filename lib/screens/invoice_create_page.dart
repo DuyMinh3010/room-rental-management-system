@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../models/record.dart';
 import '../widgets/common.dart';
-import '../widgets/payment_qr_preview.dart';
 import 'invoice_detail_page.dart';
 import 'invoice_page.dart';
 
@@ -77,7 +76,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
     }
     if (!await confirm(
       context,
-      'Phát hành hóa đơn và gửi vào hộp thư tài khoản người thuê đã liên kết?',
+      'Phát hành hóa đơn cho kỳ $period?',
     )) {
       return;
     }
@@ -90,7 +89,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
       if (mounted) {
         setState(() => preview = {...?preview, 'issuedId': result['id']});
       }
-    }, 'Đã xử lý phát hành hóa đơn');
+    }, 'Đã phát hành hóa đơn thành công');
     if (mounted && preview?['issuedId'] != null) {
       await openPage(
         context,
@@ -134,7 +133,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
       collection: 'rooms',
       builder: (_, all) {
         final activeRooms = all.where((r) => !r.archived).toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
+          ..sort((a, b) => naturalCompare(a.name, b.name));
         return ListView(
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
           children: [
@@ -201,7 +200,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                     ),
                   ),
                   Text(
-                    'Chỉ số: ${previousPeriod(period)}',
+                    'Kỳ $period',
                     style: const TextStyle(color: muted, fontSize: 11),
                   ),
                 ],
@@ -269,10 +268,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                         for (final x in list)
                           Container(
                             margin: const EdgeInsets.only(bottom: 6),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
+                            padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(10),
@@ -297,23 +293,47 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
-                                InkWell(
-                                  onTap: () async {
+                                moreActionsMenu(
+                                  onEdit: () async {
+                                    await openPage(
+                                      context,
+                                      EditForm(
+                                        title: 'Sửa phụ phí · $period',
+                                        action: 'saveExtra',
+                                        id: x.id,
+                                        initial: x.data,
+                                        submitLabel: 'Lưu phụ phí',
+                                        fixed: {
+                                          'roomId': roomId,
+                                          'period': period,
+                                        },
+                                        fields: const [
+                                          FieldSpec(
+                                            'reason',
+                                            'Ghi rõ vấn đề/lý do phụ phí',
+                                          ),
+                                          FieldSpec(
+                                            'amount',
+                                            'Số tiền phụ phí (đ)',
+                                            number: true,
+                                            min: 1,
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (mounted) _autoPreview(roomId);
+                                  },
+                                  onDelete: () async {
                                     await perform(
                                       context,
                                       () => store.command(
                                         'deleteExtra',
                                         id: x.id,
                                       ),
+                                      'Đã xóa phụ phí',
                                     );
                                     if (mounted) _autoPreview(roomId);
                                   },
-                                  child: const Icon(
-                                    Icons.delete_outline_rounded,
-                                    size: 17,
-                                    color: muted,
-                                  ),
                                 ),
                               ],
                             ),
@@ -339,7 +359,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                     children: [
                       const Expanded(
                         child: Text(
-                          'Chi tiết',
+                          'Chi tiết hóa đơn dự kiến',
                           style: TextStyle(
                             color: ink,
                             fontSize: 14,
@@ -364,7 +384,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                   const SizedBox(height: 12),
                   if (roomId == null)
                     const Text(
-                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch vụ từ dữ liệu Firebase.',
+                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch vụ từ dữ liệu Firebase. Nếu hóa đơn trước đó đã bị hủy hoặc xóa, bạn vẫn có thể tạo lại hóa đơn mới cho cùng kỳ.',
                       style: TextStyle(color: muted, fontSize: 12),
                     )
                   else if (loadingPreview)
@@ -388,7 +408,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text(
-                            'Người thuê',
+                            'Người đại diện (Trưởng phòng)',
                             style: TextStyle(color: muted, fontSize: 12),
                           ),
                           Text(
@@ -466,22 +486,12 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                         ),
                       ],
                     ),
-                    if (preview!['delivered'] != true) ...[
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Chưa liên kết tài khoản người thuê. Hóa đơn vẫn được tạo nhưng chưa gửi thông báo trực tiếp tới người thuê.',
-                        style: TextStyle(
-                          color: Color(0xFFD97706),
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
                   ],
                 ],
               ),
             ),
             const SizedBox(height: 16),
-            _sectionLabel('Hình thức thanh toán'),
+            _sectionLabel('Hình thức thanh toán dự kiến'),
             Container(
               height: 44,
               padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -511,36 +521,23 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                 ),
               ),
             ),
-            if (paymentMethod == 'bank') ...[
-              const SizedBox(height: 18),
-              const Center(
-                child: PaymentQrPreview(size: 110, outerPadding: 10),
-              ),
-              const SizedBox(height: 10),
-              const Center(
-                child: Text(
-                  'Quét mã QR để thanh toán',
-                  style: TextStyle(color: muted, fontSize: 11),
-                ),
-              ),
-            ],
             const SizedBox(height: 22),
             SizedBox(
-              height: 46,
+              height: 48,
               child: FilledButton(
                 onPressed: roomId == null ? null : _issue,
                 style: FilledButton.styleFrom(
                   backgroundColor: blue,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   textStyle: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                child: const Text('Lưu hóa đơn'),
+                child: const Text('Lưu & Phát hành hóa đơn'),
               ),
             ),
           ],

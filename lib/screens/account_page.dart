@@ -38,16 +38,13 @@ class AccountPage extends StatelessWidget {
     body: RecordsView(
       collection: 'settings',
       builder: (_, all) {
-        final settings = all.where((r) => r.id == 'landlord').firstOrNull;
-        final userEmail =
-            FirebaseAuth.instance.currentUser?.email ?? 'Chưa cập nhật email';
-        final rawName = settings?.text('name') ?? '';
-        final displayName = rawName.isNotEmpty
-            ? rawName
-            : (FirebaseAuth.instance.currentUser?.displayName?.isNotEmpty ==
-                      true
-                  ? FirebaseAuth.instance.currentUser!.displayName!
-                  : 'Tài khoản chủ trọ');
+        final user = FirebaseAuth.instance.currentUser;
+        final userEmail = user?.email ?? 'Chưa cập nhật email';
+        final displayName = user?.displayName?.trim().isNotEmpty == true
+            ? user!.displayName!.trim()
+            : userEmail.contains('@')
+            ? userEmail.substring(0, userEmail.indexOf('@'))
+            : 'Tài khoản chủ trọ';
 
         return ListView(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
@@ -177,17 +174,50 @@ class AccountPage extends StatelessWidget {
                     onTap: () => openPage(context, const SettingsPage()),
                   ),
                   _AccountMenuRow(
+                    title: 'Gán dữ liệu cũ cho tài khoản này',
+                    subtitle:
+                        'Chỉ chạy một lần để thêm ownerId cho dữ liệu hiện có',
+                    onTap: () async {
+                      if (!await confirm(
+                        context,
+                        'Toàn bộ dữ liệu chưa có ownerId sẽ được gán cho tài khoản chủ trọ đang đăng nhập. Không thể tự động chuyển dữ liệu này sang owner khác. Tiếp tục?',
+                      )) {
+                        return;
+                      }
+                      if (!context.mounted) return;
+                      await perform(
+                        context,
+                        () => store.command('migrateOwnerData'),
+                        'Đã gán ownerId cho dữ liệu cũ',
+                      );
+                    },
+                  ),
+                  _AccountMenuRow(
+                    title: 'Cập nhật ID dịch vụ cũ',
+                    subtitle:
+                        'Đồng bộ ID dịch vụ theo document ID, chỉ trong dữ liệu của bạn',
+                    onTap: () => perform(
+                      context,
+                      () => store.command('migrateServiceIds'),
+                      'Đã cập nhật ID dịch vụ cũ',
+                    ),
+                  ),
+                  _AccountMenuRow(
                     title: 'Hợp đồng & kiểm tra hóa đơn',
                     subtitle: 'Chạy kiểm tra hóa đơn đến kỳ và quá hạn',
-                    onTap: () => perform(context, () async {
-                      final result = await store.command('runBilling');
-                      if (context.mounted) {
-                        message(
-                          context,
-                          'Mới: ${result['created']} · Đã có: ${result['existing']} · Chưa đủ dữ liệu: ${result['blocked']} · Nhắc quá hạn: ${result['late']}',
-                        );
-                      }
-                    }, 'Đã chạy kiểm tra; xem mục Thông báo để biết phòng thiếu dữ liệu'),
+                    onTap: () => perform(
+                      context,
+                      () async {
+                        final result = await store.command('runBilling');
+                        if (context.mounted) {
+                          message(
+                            context,
+                            'Mới: ${result['created']} · Đã có: ${result['existing']} · Chưa đủ dữ liệu: ${result['blocked']} · Nhắc quá hạn: ${result['late']}',
+                          );
+                        }
+                      },
+                      'Đã chạy kiểm tra; xem mục Thông báo để biết phòng thiếu dữ liệu',
+                    ),
                   ),
                   _AccountMenuRow(
                     title: 'Thông báo',
@@ -304,17 +334,13 @@ class _SettingsPageState extends State<SettingsPage> {
       titleSpacing: 0,
       title: const Text(
         'Thông tin cá nhân',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w600),
       ),
     ),
     body: RecordsView(
       collection: 'settings',
       builder: (_, all) {
-        final settings = all.where((r) => r.id == 'landlord').firstOrNull;
+        final settings = all.where((r) => r.id == store.uid).firstOrNull;
         final enabled = auto ?? settings?.data['autoBilling'] == true;
         return Column(
           children: [
@@ -328,7 +354,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: SwitchListTile(
                 activeThumbColor: blue,
                 title: const Text(
-                  'Tạo hóa đơn đến kỳ khi mở app',
+                  'Tự động tạo hóa đơn khi đến kỳ',
                   style: TextStyle(
                     color: ink,
                     fontSize: 13.5,
@@ -336,7 +362,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 subtitle: const Text(
-                  'Chỉ chạy khi chủ trọ mở app; không chạy khi app đóng',
+                  'Lịch hệ thống kiểm tra định kỳ; app cũng kiểm tra khi mở',
                   style: TextStyle(color: muted, fontSize: 11.5),
                 ),
                 value: enabled,
@@ -348,7 +374,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 embedded: true,
                 title: 'Thông tin',
                 action: 'saveSettings',
-                id: 'landlord',
+                id: store.uid,
                 submitLabel: 'Lưu thông tin',
                 initial: settings?.data ?? const {},
                 fixed: {'autoBilling': enabled},
@@ -433,11 +459,7 @@ class _PasswordPageState extends State<PasswordPage> {
       titleSpacing: 0,
       title: const Text(
         'Đổi mật khẩu',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w600),
       ),
     ),
     body: ListView(

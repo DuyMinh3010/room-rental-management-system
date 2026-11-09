@@ -13,7 +13,6 @@ class MaintCreatePage extends StatefulWidget {
 
 class _MaintCreatePageState extends State<MaintCreatePage> {
   final _formKey = GlobalKey<FormState>();
-  late final String _recordId;
   late final TextEditingController _titleCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _costCtrl;
@@ -29,7 +28,6 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
   void initState() {
     super.initState();
     final m = widget.maintenance;
-    _recordId = m?.id ?? store.db.collection('_').doc().id;
     _roomId = m?.text('roomId');
     _titleCtrl = TextEditingController(text: m?.text('title') ?? '');
     _descCtrl = TextEditingController(text: m?.text('description') ?? '');
@@ -56,7 +54,10 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
       message(context, 'Vui lòng chọn phòng');
       return;
     }
-    final rawCost = _costCtrl.text.trim().replaceAll('.', '').replaceAll(',', '.');
+    final rawCost = _costCtrl.text
+        .trim()
+        .replaceAll('.', '')
+        .replaceAll(',', '.');
     final cost = rawCost.isEmpty ? 0 : num.tryParse(rawCost);
     if (cost == null || cost < 0) {
       message(context, 'Chi phí bảo trì không hợp lệ');
@@ -71,7 +72,11 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
     };
     setState(() => _saving = true);
     try {
-      await store.command('saveMaintenance', id: _recordId, data: data);
+      await store.command(
+        'saveMaintenance',
+        id: widget.maintenance?.id,
+        data: data,
+      );
       if (mounted) {
         Navigator.pop(context);
         message(context, 'Đã lưu yêu cầu bảo trì lên Firebase');
@@ -184,7 +189,7 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
             collection: 'tenants',
             builder: (_, tenants) {
               final activeRooms = rooms.where((r) => !r.archived).toList()
-                ..sort((a, b) => a.name.compareTo(b.name));
+                ..sort((a, b) => naturalCompare(a.name, b.name));
               final validRoomId = activeRooms.any((r) => r.id == _roomId)
                   ? _roomId
                   : null;
@@ -232,8 +237,9 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                         );
                       }).toList(),
                       onChanged: (v) => setState(() => _roomId = v),
-                      validator: (v) =>
-                          (v == null || v.isEmpty) ? 'Vui lòng chọn phòng' : null,
+                      validator: (v) => (v == null || v.isEmpty)
+                          ? 'Vui lòng chọn phòng'
+                          : null,
                     ),
                     const SizedBox(height: 14),
                     _fieldLabel('Loại sự cố'),
@@ -384,54 +390,6 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    _fieldLabel('Ảnh hiện trạng'),
-                    InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => message(
-                        context,
-                        'Tải ảnh hiện chưa hỗ trợ trên gói Firebase Spark',
-                      ),
-                      child: Container(
-                        height: 58,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Row(
-                          children: [
-                            Text(
-                              '+',
-                              style: TextStyle(
-                                color: blue,
-                                fontSize: 24,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            SizedBox(width: 16),
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Thêm ảnh (tối đa 3 ảnh)',
-                                  style: TextStyle(color: ink, fontSize: 12.5),
-                                ),
-                                SizedBox(height: 2),
-                                Text(
-                                  'JPG, PNG · không bắt buộc',
-                                  style: TextStyle(
-                                    color: Color(0xFF939AA8),
-                                    fontSize: 10.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                     const SizedBox(height: 20),
                     SizedBox(
                       height: 52,
@@ -459,11 +417,6 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
                               )
                             : Text(isEdit ? 'Lưu cập nhật' : 'Gửi yêu cầu'),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Yêu cầu sẽ được gửi đến chủ trọ để xác nhận.',
-                      style: TextStyle(color: ink, fontSize: 10.5),
                     ),
                   ],
                 ),

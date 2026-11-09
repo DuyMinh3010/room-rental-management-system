@@ -11,9 +11,7 @@ class RoomEditPage extends StatelessWidget {
     final isNew = room == null;
     return EditForm(
       title: isNew ? 'Thêm phòng' : 'Sửa phòng',
-      subtitle: isNew
-          ? 'Tạo thông tin phòng mới'
-          : 'Cập nhật thông tin phòng',
+      subtitle: isNew ? 'Tạo thông tin phòng mới' : 'Cập nhật thông tin phòng',
       submitLabel: isNew ? 'Thêm phòng' : 'Lưu thay đổi',
       helperText: isNew
           ? 'Phòng mới sẽ được thêm vào danh sách phòng.'
@@ -80,7 +78,7 @@ class RoomEditPage extends StatelessWidget {
         FieldSpec(
           'condition',
           'Trạng thái',
-          options: {'Tốt': 'Tốt (Sẵn sàng / Đang thuê)', 'Đang sửa': 'Đang sửa'},
+          options: {'Tốt': 'Tốt ', 'Đang sửa': 'Đang sửa'},
         ),
         FieldSpec(
           'description',

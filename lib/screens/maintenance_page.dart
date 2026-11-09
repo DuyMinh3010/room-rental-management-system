@@ -24,6 +24,21 @@ class MaintenancePage extends StatefulWidget {
 class _MaintenancePageState extends State<MaintenancePage> {
   String filter = 'all';
 
+  Future<void> _deleteMaintenance(BuildContext context, Record m) async {
+    if (!await confirm(
+      context,
+      'Xóa yêu cầu bảo trì "${m.text('title')}"?',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command('deleteMaintenance', id: m.id),
+      'Đã xóa yêu cầu bảo trì',
+    );
+  }
+
   Widget _maintFilterPill({
     required String id,
     required String text,
@@ -94,16 +109,17 @@ class _MaintenancePageState extends State<MaintenancePage> {
     ),
     body: RecordsView(
       collection: 'maintenance',
-      builder: (_, all) => RecordsView(
+      builder: (_, rawAll) => RecordsView(
         collection: 'rooms',
         builder: (_, rooms) => RecordsView(
           collection: 'tenants',
           builder: (_, tenants) {
-            all.sort(
-              (a, b) => (b.time('createdAt') ?? DateTime(2000)).compareTo(
-                a.time('createdAt') ?? DateTime(2000),
-              ),
-            );
+            final all = rawAll.where((m) => !m.archived).toList()
+              ..sort(
+                (a, b) => (b.time('createdAt') ?? DateTime(2000)).compareTo(
+                  a.time('createdAt') ?? DateTime(2000),
+                ),
+              );
             final newCount = all.where((m) => m.text('status') == 'new').length;
             final workingCount = all
                 .where((m) => m.text('status') == 'working')
@@ -188,19 +204,39 @@ class _MaintenancePageState extends State<MaintenancePage> {
                             MaintenanceDetailPage(maintenanceId: m.id),
                           ),
                           child: Padding(
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  m.text('title'),
-                                  style: const TextStyle(
-                                    color: ink,
-                                    fontSize: 14.5,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        m.text('title'),
+                                        style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 14.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    statusPill(
+                                      status,
+                                      customText: status == 'new'
+                                          ? 'Mới'
+                                          : null,
+                                    ),
+                                    moreActionsMenu(
+                                      onEdit: () => openPage(
+                                        context,
+                                        MaintCreatePage(maintenance: m),
+                                      ),
+                                      onDelete: () =>
+                                          _deleteMaintenance(context, m),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(height: 6),
+                                const SizedBox(height: 4),
                                 Text(
                                   subtitle,
                                   style: const TextStyle(
@@ -217,23 +253,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
                                     color: muted,
                                     fontSize: 11.5,
                                   ),
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    statusPill(
-                                      status,
-                                      customText: status == 'new'
-                                          ? 'Mới'
-                                          : null,
-                                    ),
-                                    const Spacer(),
-                                    const Icon(
-                                      Icons.chevron_right_rounded,
-                                      size: 22,
-                                      color: muted,
-                                    ),
-                                  ],
                                 ),
                               ],
                             ),
@@ -255,28 +274,49 @@ class MaintenanceDetailPage extends StatelessWidget {
   final String maintenanceId;
   const MaintenanceDetailPage({super.key, required this.maintenanceId});
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: canvas,
-    appBar: AppBar(
+  Widget build(BuildContext context) => DocumentView(
+    collection: 'maintenance',
+    id: maintenanceId,
+    builder: (m) => Scaffold(
       backgroundColor: canvas,
-      leading: IconButton(
-        icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
-        onPressed: () => Navigator.maybePop(context),
-      ),
-      titleSpacing: 0,
-      title: const Text(
-        'Chi tiết bảo trì',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
+      appBar: AppBar(
+        backgroundColor: canvas,
+        leading: IconButton(
+          icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+          onPressed: () => Navigator.maybePop(context),
         ),
+        titleSpacing: 0,
+        title: const Text(
+          'Chi tiết bảo trì',
+          style: TextStyle(
+            color: ink,
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        actions: [
+          moreActionsMenu(
+            iconColor: ink,
+            onEdit: () => openPage(context, MaintCreatePage(maintenance: m)),
+            onDelete: () async {
+              if (await confirm(
+                    context,
+                    'Xóa yêu cầu bảo trì "${m.text('title')}"?',
+                  ) &&
+                  context.mounted) {
+                await perform(
+                  context,
+                  () => store.command('deleteMaintenance', id: maintenanceId),
+                  'Đã xóa yêu cầu bảo trì',
+                );
+                if (context.mounted) Navigator.pop(context);
+              }
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
-    ),
-    body: DocumentView(
-      collection: 'maintenance',
-      id: maintenanceId,
-      builder: (m) => RecordsView(
+      body: RecordsView(
         collection: 'rooms',
         builder: (_, rooms) {
           final roomName =
@@ -342,12 +382,6 @@ class MaintenanceDetailPage extends StatelessWidget {
                   ),
                   child: const Text('Cập nhật xử lý'),
                 ),
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: null,
-                icon: const Icon(Icons.photo_camera_outlined),
-                label: const Text('Tải ảnh: chưa hỗ trợ trên Spark'),
               ),
               const SizedBox(height: 12),
               const Text(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/record.dart';
 import '../widgets/common.dart';
@@ -18,8 +19,26 @@ List<String> _recentPeriods([int count = 12]) {
   );
 }
 
+Record? _latestMeterBefore(
+  List<Record> meters,
+  String serviceId,
+  String period,
+) {
+  final previous =
+      meters
+          .where(
+            (meter) =>
+                meter.text('serviceId') == serviceId &&
+                meter.text('period').compareTo(period) < 0,
+          )
+          .toList()
+        ..sort((a, b) => b.text('period').compareTo(a.text('period')));
+  return previous.firstOrNull;
+}
+
 class ServicePage extends StatefulWidget {
-  const ServicePage({super.key});
+  final ValueChanged<int>? onNavigate;
+  const ServicePage({super.key, this.onNavigate});
   @override
   State<ServicePage> createState() => _ServicePageState();
 }
@@ -87,14 +106,15 @@ class _ServicePageState extends State<ServicePage> {
   Widget _buildServicesTab(BuildContext context) => RecordsView(
     collection: 'services',
     builder: (_, all) {
-      final services = all
-          .where(
-            (s) =>
-                !s.archived &&
-                s.name.toLowerCase().contains(_query.toLowerCase()),
-          )
-          .toList()
-        ..sort((a, b) => a.name.compareTo(b.name));
+      final services =
+          all
+              .where(
+                (s) =>
+                    !s.archived &&
+                    s.name.toLowerCase().contains(_query.toLowerCase()),
+              )
+              .toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
       return Column(
         children: [
           Expanded(
@@ -166,20 +186,10 @@ class _ServicePageState extends State<ServicePage> {
                               ),
                             ),
                             const SizedBox(width: 2),
-                            IconButton(
-                              tooltip: 'Xóa dịch vụ',
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 28,
-                                minHeight: 28,
-                              ),
-                              icon: const Icon(
-                                Icons.delete_outline_rounded,
-                                color: muted,
-                                size: 17,
-                              ),
-                              onPressed: () async {
+                            moreActionsMenu(
+                              onEdit: () =>
+                                  openPage(context, ServiceEditPage(service: s)),
+                              onDelete: () async {
                                 if (await confirm(
                                       context,
                                       'Xóa dịch vụ ${s.name}? Dịch vụ phải được bỏ khỏi các phòng trước.',
@@ -195,11 +205,6 @@ class _ServicePageState extends State<ServicePage> {
                                   );
                                 }
                               },
-                            ),
-                            const Icon(
-                              Icons.chevron_right_rounded,
-                              color: muted,
-                              size: 20,
                             ),
                           ],
                         ),
@@ -236,6 +241,100 @@ class _ServicePageState extends State<ServicePage> {
     },
   );
 
+  Future<void> _assignMeterServicesAndOpen(
+    BuildContext context,
+    Record room,
+    List<Record> meterServices,
+  ) async {
+    final serviceIds = meterServices.map((service) => service.id).toSet();
+    final selected = room.strings('serviceIds').toSet()
+      ..removeWhere((id) => !serviceIds.contains(id));
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, refresh) => AlertDialog(
+          title: Text('Dịch vụ tính chỉ số · ${room.name}'),
+          content: SizedBox(
+            width: 400,
+            child: meterServices.isEmpty
+                ? const Text(
+                    'Chưa có dịch vụ nào được tạo theo cách tính chỉ số. '
+                    'Hãy tạo dịch vụ Điện/Nước trong Danh mục trước.',
+                  )
+                : SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final service in meterServices)
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(service.name),
+                            subtitle: Text(
+                              '${money(service.data['price'])}/${service.text('unit')}',
+                            ),
+                            value: selected.contains(service.id),
+                            onChanged: (checked) => refresh(() {
+                              if (checked == true) {
+                                selected.add(service.id);
+                              } else {
+                                selected.remove(service.id);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Hủy'),
+            ),
+            if (meterServices.isNotEmpty)
+              FilledButton(
+                onPressed: () =>
+                    Navigator.pop(dialogContext, Set<String>.of(selected)),
+                child: const Text('Lưu và mở ô nhập'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !context.mounted) return;
+    if (result.isEmpty) {
+      message(context, 'Hãy chọn ít nhất một dịch vụ tính theo chỉ số');
+      return;
+    }
+
+    final allServiceIds = room
+        .strings('serviceIds')
+        .where((id) => !serviceIds.contains(id))
+        .followedBy(result)
+        .toSet()
+        .toList();
+    try {
+      await store.command(
+        'assignServices',
+        args: {'roomId': room.id, 'serviceIds': allServiceIds},
+      );
+      if (!context.mounted) return;
+      final updatedRoom = Record(room.id, {
+        ...room.data,
+        'serviceIds': allServiceIds,
+      });
+      await openPage(
+        context,
+        RoomMeterEntryPage(
+          room: updatedRoom,
+          initialPeriod: _selectedPeriod,
+          onNavigate: widget.onNavigate,
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) message(context, errorText(e));
+    }
+  }
+
   Widget _buildMetersTab(BuildContext context) {
     final periods = _recentPeriods(12);
     if (!periods.contains(_selectedPeriod)) {
@@ -256,6 +355,9 @@ class _ServicePageState extends State<ServicePage> {
                 .where((s) => !s.archived && s.text('mode') == 'meter')
                 .map((s) => s.id)
                 .toSet();
+            final meterServices = svcs
+                .where((s) => !s.archived && s.text('mode') == 'meter')
+                .toList();
             return ListView(
               padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
               children: [
@@ -297,7 +399,14 @@ class _ServicePageState extends State<ServicePage> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
+                box(
+                  const Text(
+                    'Chọn phòng rồi nhập chỉ số mới cho từng dịch vụ như Điện, Nước. Lần đầu, nhập thêm chỉ số cũ đang hiển thị trên đồng hồ; từ lần sau ứng dụng tự lấy chỉ số mới của kỳ gần nhất làm chỉ số cũ.',
+                    style: TextStyle(color: muted, fontSize: 12, height: 1.4),
+                  ),
+                  padding: const EdgeInsets.all(12),
+                ),
                 const Text(
                   'Danh sách phòng',
                   style: TextStyle(
@@ -308,7 +417,13 @@ class _ServicePageState extends State<ServicePage> {
                 ),
                 const SizedBox(height: 8),
                 if (rooms.isEmpty)
-                  empty('Tạo phòng ở Trang chủ trước')
+                  box(
+                    const Text(
+                      'Chưa có phòng. Hãy tạo phòng trước khi nhập chỉ số.',
+                      style: TextStyle(color: muted, fontSize: 12, height: 1.4),
+                    ),
+                    padding: const EdgeInsets.all(12),
+                  )
                 else
                   Container(
                     decoration: BoxDecoration(
@@ -339,71 +454,98 @@ class _ServicePageState extends State<ServicePage> {
                               final allEntered =
                                   roomMeterIds.isNotEmpty &&
                                   enteredCount == roomMeterIds.length;
-                              return InkWell(
-                                onTap: () => openPage(
-                                  context,
-                                  RoomMeterEntryPage(
-                                    room: r,
-                                    initialPeriod: _selectedPeriod,
-                                  ),
+                              final divider = i < rooms.length - 1
+                                  ? const Border(
+                                      bottom: BorderSide(color: line),
+                                    )
+                                  : null;
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
                                 ),
-                                child: Container(
-                                  height: 64,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    border: i < rooms.length - 1
-                                        ? const Border(
-                                            bottom: BorderSide(
-                                              color: line,
-                                              width: 1,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              r.name,
-                                              style: const TextStyle(
-                                                color: ink,
-                                                fontSize: 13.5,
-                                                fontWeight: FontWeight.w600,
+                                decoration: BoxDecoration(border: divider),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(8),
+                                        onTap: roomMeterIds.isEmpty
+                                            ? null
+                                            : () => openPage(
+                                                context,
+                                                RoomMeterEntryPage(
+                                                  room: r,
+                                                  initialPeriod:
+                                                      _selectedPeriod,
+                                                  onNavigate: widget.onNavigate,
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(height: 3),
-                                            Text(
-                                              allEntered
-                                                  ? 'Đã nhập'
-                                                  : 'Chưa nhập',
-                                              style: TextStyle(
-                                                color: allEntered
-                                                    ? const Color(0xFF16A34A)
-                                                    : muted,
-                                                fontSize: 10.5,
-                                                fontWeight: allEntered
-                                                    ? FontWeight.w600
-                                                    : FontWeight.w400,
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 6,
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                r.name,
+                                                style: const TextStyle(
+                                                  color: ink,
+                                                  fontSize: 13.5,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                roomMeterIds.isEmpty
+                                                    ? 'Chưa áp dụng dịch vụ tính chỉ số'
+                                                    : '${roomMeterIds.map((id) => svcs.firstWhere((service) => service.id == id).name).join(' · ')}  •  ${allEntered ? 'Đã nhập' : 'Chưa nhập'}',
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color:
+                                                      roomMeterIds.isNotEmpty &&
+                                                          allEntered
+                                                      ? const Color(0xFF16A34A)
+                                                      : muted,
+                                                  fontSize: 10.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ),
-                                      const Icon(
-                                        Icons.chevron_right_rounded,
-                                        color: muted,
-                                        size: 20,
+                                    ),
+                                    if (roomMeterIds.isEmpty)
+                                      FilledButton.tonalIcon(
+                                        onPressed: () =>
+                                            _assignMeterServicesAndOpen(
+                                              context,
+                                              r,
+                                              meterServices,
+                                            ),
+                                        icon: const Icon(Icons.add, size: 18),
+                                        label: const Text('Chọn dịch vụ'),
+                                      )
+                                    else
+                                      FilledButton.icon(
+                                        onPressed: () => openPage(
+                                          context,
+                                          RoomMeterEntryPage(
+                                            room: r,
+                                            initialPeriod: _selectedPeriod,
+                                            onNavigate: widget.onNavigate,
+                                          ),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.edit_note_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text('Nhập chỉ số'),
                                       ),
-                                    ],
-                                  ),
+                                  ],
                                 ),
                               );
                             },
@@ -424,14 +566,22 @@ class _ServicePageState extends State<ServicePage> {
     backgroundColor: canvas,
     appBar: AppBar(
       backgroundColor: canvas,
-      title: const Text(
-        'Dịch vụ',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
+      title: Text(
+        _tab == 0 ? 'Dịch vụ' : 'Nhập chỉ số',
+        style: TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w600),
       ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: TextButton.icon(
+            onPressed: () => setState(() => _tab = _tab == 0 ? 1 : 0),
+            icon: Icon(
+              _tab == 0 ? Icons.speed_rounded : Icons.list_alt_rounded,
+            ),
+            label: Text(_tab == 0 ? 'Nhập chỉ số' : 'Danh mục'),
+          ),
+        ),
+      ],
     ),
     body: _tab == 0 ? _buildServicesTab(context) : _buildMetersTab(context),
   );
@@ -440,10 +590,12 @@ class _ServicePageState extends State<ServicePage> {
 class RoomMeterEntryPage extends StatefulWidget {
   final Record room;
   final String initialPeriod;
+  final ValueChanged<int>? onNavigate;
   const RoomMeterEntryPage({
     super.key,
     required this.room,
     required this.initialPeriod,
+    this.onNavigate,
   });
 
   @override
@@ -454,6 +606,7 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
   late String _period;
   final _prevCtrls = <String, TextEditingController>{};
   final _currCtrls = <String, TextEditingController>{};
+  final _fieldErrors = <String, String>{};
   String _hydratedKey = '';
   bool _saving = false;
 
@@ -485,53 +638,73 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
             (m) => m.text('period') == _period && m.text('serviceId') == s.id,
           )
           .firstOrNull;
-      final prev = meters
-          .where(
-            (m) =>
-                m.text('period') == previousPeriod(_period) &&
-                m.text('serviceId') == s.id,
-          )
-          .firstOrNull;
+      final prev = _latestMeterBefore(meters, s.id, _period);
+      final initReading = _initialRoomReadingForService(widget.room, s);
       final prevVal =
-          (prev?.data['current'] ?? saved?.data['previous'] ?? 0).toString();
+          (saved?.data['previous'] ?? prev?.data['current'] ?? initReading ?? '')
+              .toString();
       final currVal = saved?.data['current']?.toString() ?? '';
-      _prevCtrls.putIfAbsent(s.id, () => TextEditingController()).text = prevVal;
-      _currCtrls.putIfAbsent(s.id, () => TextEditingController()).text = currVal;
+      _prevCtrls.putIfAbsent(s.id, () => TextEditingController()).text =
+          prevVal;
+      _currCtrls.putIfAbsent(s.id, () => TextEditingController()).text =
+          currVal;
     }
   }
 
-  Future<void> _saveAll(List<Record> meterServices, List<Record> meters) async {
+  Future<void> _saveAll(
+    String roomId,
+    List<Record> meterServices,
+    List<Record> meters,
+  ) async {
     if (_saving) return;
+    setState(_fieldErrors.clear);
     if (meterServices.isEmpty) {
       message(context, 'Phòng chưa áp dụng dịch vụ theo chỉ số');
       return;
     }
     final payloads = <Map<String, dynamic>>[];
     for (final s in meterServices) {
-      final currText = (_currCtrls[s.id]?.text ?? '').trim().replaceAll(',', '.');
-      if (currText.isEmpty) continue;
-      final prevRecord = meters
-          .where(
-            (m) =>
-                m.text('period') == previousPeriod(_period) &&
-                m.text('serviceId') == s.id,
-          )
-          .firstOrNull;
+      final currText = (_currCtrls[s.id]?.text ?? '').trim().replaceAll(
+        ',',
+        '.',
+      );
+      if (currText.isEmpty) {
+        setState(() => _fieldErrors['${s.id}_current'] = 'Nhập chỉ số mới');
+        return;
+      }
+      final prevRecord = _latestMeterBefore(meters, s.id, _period);
       final prevText = prevRecord != null
           ? '${prevRecord.data['current'] ?? 0}'
-          : (_prevCtrls[s.id]?.text ?? '0').trim().replaceAll(',', '.');
+          : (_prevCtrls[s.id]?.text ?? '').trim().replaceAll(',', '.');
+      if (prevText.isEmpty) {
+        setState(
+          () => _fieldErrors['${s.id}_previous'] = 'Nhập chỉ số đầu kỳ lần đầu',
+        );
+        return;
+      }
       final prevNum = num.tryParse(prevText);
       final currNum = num.tryParse(currText);
-      if (prevNum == null || currNum == null) {
-        message(context, 'Chỉ số dịch vụ ${s.name} không hợp lệ');
+      if (prevNum == null ||
+          currNum == null ||
+          !prevNum.isFinite ||
+          !currNum.isFinite ||
+          prevNum < 0 ||
+          currNum < 0) {
+        final field = prevNum == null || !prevNum.isFinite || prevNum < 0
+            ? 'previous'
+            : 'current';
+        setState(() => _fieldErrors['${s.id}_$field'] = 'Chỉ số không hợp lệ');
         return;
       }
       if (currNum < prevNum) {
-        message(context, '${s.name}: Chỉ số mới không được nhỏ hơn chỉ số cũ');
+        setState(
+          () => _fieldErrors['${s.id}_current'] =
+              'Chỉ số mới phải lớn hơn hoặc bằng chỉ số cũ',
+        );
         return;
       }
       payloads.add({
-        'roomId': widget.room.id,
+        'roomId': roomId,
         'serviceId': s.id,
         'period': _period,
         'previous': prevNum,
@@ -591,6 +764,12 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
             final assigned = allServices
                 .where((s) => !s.archived && assignedIds.contains(s.id))
                 .toList();
+            final serviceOrder = widget.room.strings('serviceIds');
+            assigned.sort(
+              (a, b) => serviceOrder
+                  .indexOf(a.id)
+                  .compareTo(serviceOrder.indexOf(b.id)),
+            );
             final meterServices = assigned
                 .where((s) => s.text('mode') == 'meter')
                 .toList();
@@ -600,541 +779,606 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
             _syncControllers(meterServices, meters);
             final people = widget.room.number('people') ?? 0;
 
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 28),
+            return Column(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 15,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: line, width: 0.7),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(14, 4, 14, 16),
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Phòng',
-                            style: TextStyle(color: muted, fontSize: 10.5),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.room.name,
-                            style: const TextStyle(
-                              color: ink,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          const Text(
-                            'Tháng',
-                            style: TextStyle(color: muted, fontSize: 10.5),
-                          ),
-                          DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _period,
-                              isDense: true,
-                              dropdownColor: Colors.white,
-                              icon: const Icon(
-                                Icons.keyboard_arrow_down_rounded,
-                                size: 16,
-                                color: muted,
-                              ),
-                              style: const TextStyle(
-                                color: ink,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              items: [
-                                for (final p in periods)
-                                  DropdownMenuItem(
-                                    value: p,
-                                    child: Text(_displayMonth(p)),
-                                  ),
-                              ],
-                              onChanged: (v) {
-                                if (v != null) {
-                                  setState(() {
-                                    _period = v;
-                                    _hydratedKey = '';
-                                  });
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (assigned.isEmpty)
-                  empty('Phòng chưa áp dụng dịch vụ nào'),
-                for (final s in meterServices)
-                  Builder(
-                    builder: (context) {
-                      final prevRecord = meters
-                          .where(
-                            (m) =>
-                                m.text('period') == previousPeriod(_period) &&
-                                m.text('serviceId') == s.id,
-                          )
-                          .firstOrNull;
-                      final prevCtrl = _prevCtrls[s.id]!;
-                      final currCtrl = _currCtrls[s.id]!;
-                      final prevNum = num.tryParse(
-                        prevCtrl.text.trim().replaceAll(',', '.'),
-                      );
-                      final currNum = num.tryParse(
-                        currCtrl.text.trim().replaceAll(',', '.'),
-                      );
-                      final price = s.number('price') ?? 0;
-                      final usage =
-                          (prevNum != null && currNum != null && currNum >= prevNum)
-                          ? (currNum - prevNum)
-                          : null;
-                      final unit = s.text('unit');
-
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.all(14),
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: line, width: 0.7),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0xFF168BFF),
+                            width: 2,
+                          ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Row(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                serviceBadge(s.name, mode: 'meter', size: 34),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        s.name,
-                                        style: const TextStyle(
-                                          color: ink,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      const Text(
-                                        'Theo chỉ số',
-                                        style: TextStyle(
-                                          color: muted,
-                                          fontSize: 10.5,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                const Text(
+                                  'Phòng',
+                                  style: TextStyle(color: muted, fontSize: 11),
                                 ),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    const Text(
-                                      'Đơn giá',
-                                      style: TextStyle(
-                                        color: muted,
-                                        fontSize: 10,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${money(price)}/$unit',
-                                      style: const TextStyle(
-                                        color: ink,
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Chỉ số cũ',
-                                        style: TextStyle(
-                                          color: muted,
-                                          fontSize: 10.5,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 5),
-                                      Container(
-                                        height: 40,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFF5F7FA),
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                              child: TextField(
-                                                controller: prevCtrl,
-                                                readOnly: prevRecord != null,
-                                                keyboardType:
-                                                    const TextInputType.numberWithOptions(
-                                                      decimal: true,
-                                                    ),
-                                                onChanged: (_) =>
-                                                    setState(() {}),
-                                                style: const TextStyle(
-                                                  color: ink,
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                                decoration:
-                                                    const InputDecoration(
-                                                      border: InputBorder.none,
-                                                      isDense: true,
-                                                      contentPadding:
-                                                          EdgeInsets.zero,
-                                                    ),
-                                              ),
-                                            ),
-                                            Text(
-                                              unit,
-                                              style: const TextStyle(
-                                                color: muted,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Chỉ số mới',
-                                        style: TextStyle(
-                                          color: ink,
-                                          fontSize: 10.5,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 5),
-                                      Container(
-                                        height: 40,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                          border: Border.all(
-                                            color: const Color(0xFFD1D6E0),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                              child: TextField(
-                                                controller: currCtrl,
-                                                keyboardType:
-                                                    const TextInputType.numberWithOptions(
-                                                      decimal: true,
-                                                    ),
-                                                onChanged: (_) =>
-                                                    setState(() {}),
-                                                style: const TextStyle(
-                                                  color: ink,
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                                decoration:
-                                                    const InputDecoration(
-                                                      hintText: 'Nhập',
-                                                      hintStyle: TextStyle(
-                                                        color: Color(
-                                                          0xFF94A3B8,
-                                                        ),
-                                                        fontSize: 12.5,
-                                                        fontWeight:
-                                                            FontWeight.w400,
-                                                      ),
-                                                      border: InputBorder.none,
-                                                      isDense: true,
-                                                      contentPadding:
-                                                          EdgeInsets.zero,
-                                                    ),
-                                              ),
-                                            ),
-                                            Text(
-                                              unit,
-                                              style: const TextStyle(
-                                                color: muted,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.room.name,
+                                  style: const TextStyle(
+                                    color: ink,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 12),
-                            Row(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Expanded(
-                                  child: Row(
-                                    children: [
-                                      const Text(
-                                        'Số tiêu thụ  ',
-                                        style: TextStyle(
-                                          color: muted,
-                                          fontSize: 10.5,
-                                        ),
-                                      ),
-                                      Flexible(
-                                        child: Text(
-                                          usage == null
-                                              ? 'Tự động tính'
-                                              : '$usage $unit',
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: usage == null
-                                                ? const Color(0xFF8C9CB0)
-                                                : ink,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                const Text(
+                                  'Tháng',
+                                  style: TextStyle(color: muted, fontSize: 11),
                                 ),
-                                Expanded(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      const Text(
-                                        'Thành tiền  ',
-                                        style: TextStyle(
-                                          color: muted,
-                                          fontSize: 10.5,
+                                DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _period,
+                                    isDense: true,
+                                    iconSize: 0,
+                                    dropdownColor: Colors.white,
+                                    icon: const SizedBox.shrink(),
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    items: [
+                                      for (final p in periods)
+                                        DropdownMenuItem(
+                                          value: p,
+                                          child: Text(_displayMonth(p)),
                                         ),
-                                      ),
-                                      Flexible(
-                                        child: Text(
-                                          usage == null
-                                              ? 'Tự động tính'
-                                              : money(usage * price),
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: usage == null
-                                                ? const Color(0xFF8C9CB0)
-                                                : ink,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
                                     ],
+                                    onChanged: (v) {
+                                      if (v != null) {
+                                        setState(() {
+                                          _period = v;
+                                          _hydratedKey = '';
+                                        });
+                                      }
+                                    },
                                   ),
                                 ),
                               ],
                             ),
                           ],
                         ),
-                      );
-                    },
-                  ),
-                for (final s in fixedServices)
-                  Builder(
-                    builder: (context) {
-                      final isPerson = s.text('mode') == 'person';
-                      final price = s.number('price') ?? 0;
-                      final amount = isPerson ? price * people : price;
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: line, width: 0.7),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              children: [
-                                serviceBadge(
-                                  s.name,
-                                  mode: s.text('mode'),
-                                  size: 34,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        s.name,
-                                        style: const TextStyle(
-                                          color: ink,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        '${label(s.text('mode'))}  •  ${money(price)}/${s.text('unit')}',
-                                        style: const TextStyle(
-                                          color: muted,
-                                          fontSize: 10.5,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (!isPerson)
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      const Text(
-                                        'Thành tiền',
-                                        style: TextStyle(
-                                          color: muted,
-                                          fontSize: 10,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        money(amount),
-                                        style: const TextStyle(
-                                          color: ink,
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                              ],
-                            ),
-                            if (isPerson) ...[
-                              const SizedBox(height: 10),
-                              Row(
+                      ),
+                      const SizedBox(height: 22),
+                      if (assigned.isEmpty)
+                        empty('Phòng chưa áp dụng dịch vụ nào'),
+                      for (final s in meterServices)
+                        Builder(
+                          builder: (context) {
+                            final prevRecord = _latestMeterBefore(
+                              meters,
+                              s.id,
+                              _period,
+                            );
+                            final prevCtrl = _prevCtrls[s.id]!;
+                            final currCtrl = _currCtrls[s.id]!;
+                            final prevNum = num.tryParse(
+                              prevCtrl.text.trim().replaceAll(',', '.'),
+                            );
+                            final currNum = num.tryParse(
+                              currCtrl.text.trim().replaceAll(',', '.'),
+                            );
+                            final price = s.number('price') ?? 0;
+                            final usage =
+                                (prevNum != null &&
+                                    currNum != null &&
+                                    currNum >= prevNum)
+                                ? (currNum - prevNum)
+                                : null;
+                            final unit = s.text('unit');
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 14),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  Row(
+                                    children: [
+                                      serviceBadge(
+                                        s.name,
+                                        mode: 'meter',
+                                        size: 34,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              s.name,
+                                              style: const TextStyle(
+                                                color: ink,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            const Text(
+                                              'Theo chỉ số',
+                                              style: TextStyle(
+                                                color: muted,
+                                                fontSize: 10.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          const Text(
+                                            'Đơn giá',
+                                            style: TextStyle(
+                                              color: muted,
+                                              fontSize: 10,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            '${money(price)}/$unit',
+                                            style: const TextStyle(
+                                              color: ink,
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 14),
                                   const Text(
-                                    'Số người',
+                                    'Chỉ số cũ',
                                     style: TextStyle(
                                       color: muted,
                                       fontSize: 10.5,
                                     ),
                                   ),
-                                  const SizedBox(width: 10),
+                                  const SizedBox(height: 5),
                                   Container(
-                                    width: 64,
-                                    height: 32,
-                                    alignment: Alignment.center,
+                                    height: 48,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFF5F7FA),
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: line),
                                     ),
-                                    child: Text(
-                                      '$people',
-                                      style: const TextStyle(
-                                        color: ink,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
+                                    child: Row(
+                                      children: [
+                                        if (prevRecord != null) ...[
+                                          const Icon(
+                                            Icons.auto_awesome_rounded,
+                                            color: blue,
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 8),
+                                        ],
+                                        Expanded(
+                                          child: prevRecord != null
+                                              ? Text(
+                                                  prevCtrl.text,
+                                                  style: const TextStyle(
+                                                    color: ink,
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                )
+                                              : TextField(
+                                                  controller: prevCtrl,
+                                                  keyboardType:
+                                                      const TextInputType.numberWithOptions(
+                                                        decimal: true,
+                                                      ),
+                                                  inputFormatters: [
+                                                    FilteringTextInputFormatter.allow(
+                                                      RegExp(r'^\d*[.,]?\d*$'),
+                                                    ),
+                                                  ],
+                                                  onChanged: (_) => setState(
+                                                    () => _fieldErrors.remove(
+                                                      '${s.id}_previous',
+                                                    ),
+                                                  ),
+                                                  style: const TextStyle(
+                                                    color: ink,
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                  decoration: const InputDecoration(
+                                                    hintText:
+                                                        'Nhập chỉ số đầu kỳ lần đầu',
+                                                    border: InputBorder.none,
+                                                    isDense: true,
+                                                    contentPadding:
+                                                        EdgeInsets.zero,
+                                                  ),
+                                                ),
+                                        ),
+                                        if (prevRecord != null)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              right: 8,
+                                            ),
+                                            child: Text(
+                                              'Tự lấy từ ${_displayMonth(prevRecord.text('period'))}',
+                                              style: const TextStyle(
+                                                color: muted,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ),
+                                        Text(
+                                          unit,
+                                          style: const TextStyle(
+                                            color: muted,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (_fieldErrors['${s.id}_previous'] != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        _fieldErrors['${s.id}_previous']!,
+                                        style: const TextStyle(
+                                          color: Color(0xFFB91C1C),
+                                          fontSize: 11,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const Spacer(),
+                                  const SizedBox(height: 10),
                                   const Text(
-                                    'Thành tiền  ',
+                                    'Chỉ số mới',
                                     style: TextStyle(
-                                      color: muted,
-                                      fontSize: 10.5,
-                                    ),
-                                  ),
-                                  Text(
-                                    money(amount),
-                                    style: const TextStyle(
                                       color: ink,
-                                      fontSize: 12.5,
+                                      fontSize: 10.5,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
+                                  const SizedBox(height: 5),
+                                  Container(
+                                    height: 48,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: const Color(0xFFD1D6E0),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextField(
+                                            controller: currCtrl,
+                                            keyboardType:
+                                                const TextInputType.numberWithOptions(
+                                                  decimal: true,
+                                                ),
+                                            inputFormatters: [
+                                              FilteringTextInputFormatter.allow(
+                                                RegExp(r'^\d*[.,]?\d*$'),
+                                              ),
+                                            ],
+                                            onChanged: (_) => setState(
+                                              () => _fieldErrors.remove(
+                                                '${s.id}_current',
+                                              ),
+                                            ),
+                                            style: const TextStyle(
+                                              color: ink,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            decoration: const InputDecoration(
+                                              hintText: 'Nhập số trên đồng hồ',
+                                              hintStyle: TextStyle(
+                                                color: Color(0xFF94A3B8),
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w400,
+                                              ),
+                                              border: InputBorder.none,
+                                              isDense: true,
+                                              contentPadding: EdgeInsets.zero,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          unit,
+                                          style: const TextStyle(
+                                            color: muted,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (_fieldErrors['${s.id}_current'] != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        _fieldErrors['${s.id}_current']!,
+                                        style: const TextStyle(
+                                          color: Color(0xFFB91C1C),
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Row(
+                                          children: [
+                                            const Text(
+                                              'Số tiêu thụ  ',
+                                              style: TextStyle(
+                                                color: muted,
+                                                fontSize: 10.5,
+                                              ),
+                                            ),
+                                            Flexible(
+                                              child: Text(
+                                                usage == null
+                                                    ? 'Tự động tính'
+                                                    : '$usage $unit',
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: usage == null
+                                                      ? const Color(0xFF8C9CB0)
+                                                      : ink,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          children: [
+                                            const Text(
+                                              'Thành tiền  ',
+                                              style: TextStyle(
+                                                color: muted,
+                                                fontSize: 10.5,
+                                              ),
+                                            ),
+                                            Flexible(
+                                              child: Text(
+                                                usage == null
+                                                    ? 'Tự động tính'
+                                                    : money(usage * price),
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: usage == null
+                                                      ? const Color(0xFF8C9CB0)
+                                                      : ink,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ],
                               ),
-                            ],
-                          ],
+                            );
+                          },
                         ),
-                      );
-                    },
-                  ),
-                if (meterServices.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 46,
-                    child: FilledButton(
-                      onPressed: _saving
-                          ? null
-                          : () => _saveAll(meterServices, meters),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF1C61EB),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      child: _saving
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
+                      for (final s in fixedServices)
+                        Builder(
+                          builder: (context) {
+                            final isPerson = s.text('mode') == 'person';
+                            final price = s.number('price') ?? 0;
+                            final amount = isPerson ? price * people : price;
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
                                 color: Colors.white,
+                                borderRadius: BorderRadius.circular(18),
                               ),
-                            )
-                          : const Text('Lưu chỉ số'),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      serviceBadge(
+                                        s.name,
+                                        mode: s.text('mode'),
+                                        size: 34,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              s.name,
+                                              style: const TextStyle(
+                                                color: ink,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              '${label(s.text('mode'))}  •  ${money(price)}/${s.text('unit')}',
+                                              style: const TextStyle(
+                                                color: muted,
+                                                fontSize: 10.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (!isPerson)
+                                        Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.end,
+                                          children: [
+                                            const Text(
+                                              'Thành tiền',
+                                              style: TextStyle(
+                                                color: muted,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              money(amount),
+                                              style: const TextStyle(
+                                                color: ink,
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                  if (isPerson) ...[
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        const Text(
+                                          'Số người',
+                                          style: TextStyle(
+                                            color: muted,
+                                            fontSize: 10.5,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Container(
+                                          width: 64,
+                                          height: 32,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFF5F7FA),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '$people',
+                                            style: const TextStyle(
+                                              color: ink,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        const Text(
+                                          'Thành tiền  ',
+                                          style: TextStyle(
+                                            color: muted,
+                                            fontSize: 10.5,
+                                          ),
+                                        ),
+                                        Text(
+                                          money(amount),
+                                          style: const TextStyle(
+                                            color: ink,
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                if (meterServices.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: FilledButton(
+                        onPressed: _saving
+                            ? null
+                            : () => _saveAll(
+                                widget.room.id,
+                                meterServices,
+                                meters,
+                              ),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF1C61EB),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        child: _saving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Lưu chỉ số'),
+                      ),
                     ),
                   ),
-                ],
+                if (widget.onNavigate != null)
+                  RrmsBottomBar(
+                    selectedIndex: 2,
+                    onTap: (index) {
+                      Navigator.of(context).pop();
+                      widget.onNavigate?.call(index);
+                    },
+                  ),
               ],
             );
           },
@@ -1247,9 +1491,7 @@ class RoomServices extends StatelessWidget {
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: [
-                  for (final s in assigned) serviceChipPill(s.name),
-                ],
+                children: [for (final s in assigned) serviceChipPill(s.name)],
               ),
             const SizedBox(height: 10),
             GestureDetector(
@@ -1444,13 +1686,7 @@ class _MeterRoomFormState extends State<MeterRoomForm> {
                                   m.text('serviceId') == s.id,
                             )
                             .firstOrNull;
-                        final prev = meters
-                            .where(
-                              (m) =>
-                                  m.text('period') == previousPeriod(period) &&
-                                  m.text('serviceId') == s.id,
-                            )
-                            .firstOrNull;
+                        final prev = _latestMeterBefore(meters, s.id, period);
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8),
                           decoration: BoxDecoration(
@@ -1532,6 +1768,17 @@ class _MeterRoomFormState extends State<MeterRoomForm> {
   }
 }
 
+num? _initialRoomReadingForService(Record room, Record service) {
+  final sName = service.name.toLowerCase();
+  if (sName.contains('điện') || sName.contains('dien')) {
+    return room.number('initialElectric');
+  }
+  if (sName.contains('nước') || sName.contains('nuoc')) {
+    return room.number('initialWater');
+  }
+  return null;
+}
+
 class MeterInputPage extends StatelessWidget {
   final Record room, service;
   final Record? meter, previous;
@@ -1547,19 +1794,23 @@ class MeterInputPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => EditForm(
     title: '${room.name} · ${service.name} · $period',
+    subtitle:
+        'Nhập chỉ số cũ và chỉ số mới cho dịch vụ ${service.name} (${service.text('unit')}). Tiêu thụ = chỉ số mới − chỉ số cũ.',
     action: 'saveMeter',
     submitLabel: 'Lưu chỉ số',
     initial: {
-      'previous': previous?.data['current'] ?? meter?.data['previous'] ?? '',
+      'previous':
+          previous?.data['current'] ??
+          meter?.data['previous'] ??
+          _initialRoomReadingForService(room, service) ??
+          '',
       'current': meter?.data['current'] ?? '',
     },
     fixed: {'roomId': room.id, 'serviceId': service.id, 'period': period},
     fields: [
       FieldSpec(
         'previous',
-        previous == null
-            ? 'Chỉ số cũ (kỳ đầu nhập thực tế)'
-            : 'Chỉ số cũ (lấy từ kỳ trước: ${previous!.data['current']})',
+        'Chỉ số cũ',
         number: true,
         readOnly: previous != null,
         decimal: true,

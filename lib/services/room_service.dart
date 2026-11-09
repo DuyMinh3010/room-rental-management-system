@@ -112,7 +112,7 @@ class RoomService {
       'price': moneyField('price', 'đ/tháng'),
       'deposit': moneyField('deposit', 'đ'),
       'area': area == null ? missing : '${area}m²',
-      'people': people == null ? missing : '${people} người',
+      'people': people == null ? missing : '$people người',
       'billingDay': billingDay,
       'zone': text('zone'),
       'description': text('description'),

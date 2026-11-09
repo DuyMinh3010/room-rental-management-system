@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/record.dart';
 import '../services/app_store.dart';
+import '../utils/validators.dart';
 
 export '../services/app_store.dart' show errorText;
 
@@ -87,17 +89,19 @@ Future<bool> confirm(BuildContext context, String text) async =>
 Future<void> openPage(BuildContext context, Widget page) =>
     Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => page));
 
-Widget box(Widget child, {EdgeInsetsGeometry padding = const EdgeInsets.all(16)}) =>
-    Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: padding,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: line, width: 1),
-      ),
-      child: child,
-    );
+Widget box(
+  Widget child, {
+  EdgeInsetsGeometry padding = const EdgeInsets.all(16),
+}) => Container(
+  margin: const EdgeInsets.only(bottom: 12),
+  padding: padding,
+  decoration: BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: line, width: 1),
+  ),
+  child: child,
+);
 
 Widget info(String title, String value, {bool boldValue = false}) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 7),
@@ -105,10 +109,7 @@ Widget info(String title, String value, {bool boldValue = false}) => Padding(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Expanded(
-        child: Text(
-          title,
-          style: const TextStyle(color: muted, fontSize: 13),
-        ),
+        child: Text(title, style: const TextStyle(color: muted, fontSize: 13)),
       ),
       const SizedBox(width: 12),
       Expanded(
@@ -174,7 +175,9 @@ Widget statusPill(String value, {String? customText}) {
       value == 'Hoàn thành') {
     foreground = const Color(0xFF16A34A);
     background = const Color(0xFFECFDF3);
-  } else if (normalized == 'new' || value == 'Mới' || value == 'Mới tiếp nhận') {
+  } else if (normalized == 'new' ||
+      value == 'Mới' ||
+      value == 'Mới tiếp nhận') {
     foreground = const Color(0xFFDC2626);
     background = const Color(0xFFFDECEC);
   } else if (normalized.contains('unpaid') || value == 'Chưa thanh toán') {
@@ -186,7 +189,9 @@ Widget statusPill(String value, {String? customText}) {
       value == 'Đang xử lý') {
     foreground = const Color(0xFFD97706);
     background = const Color(0xFFFFF4E5);
-  } else if (normalized == 'ended' || value == 'Đã thanh lý' || value == 'Đã kết thúc') {
+  } else if (normalized == 'ended' ||
+      value == 'Đã thanh lý' ||
+      value == 'Đã kết thúc') {
     foreground = ink;
     background = const Color(0xFFBDCCE9);
   } else if (normalized.contains('void') ||
@@ -278,7 +283,9 @@ Widget initialAvatar(
       icon: Icons.water_drop_rounded,
     );
   }
-  if (lower.contains('wifi') || lower.contains('internet') || lower.contains('mạng')) {
+  if (lower.contains('wifi') ||
+      lower.contains('internet') ||
+      lower.contains('mạng')) {
     return (
       color: const Color(0xFF7C3AED),
       softBg: const Color(0xFFF3E8FF),
@@ -286,7 +293,9 @@ Widget initialAvatar(
       icon: Icons.wifi_rounded,
     );
   }
-  if (lower.contains('rác') || lower.contains('rac') || lower.contains('vệ sinh')) {
+  if (lower.contains('rác') ||
+      lower.contains('rac') ||
+      lower.contains('vệ sinh')) {
     return (
       color: const Color(0xFFEA580C),
       softBg: const Color(0xFFFFF7ED),
@@ -324,10 +333,7 @@ Widget serviceBadge(String name, {String mode = '', double size = 34}) {
     width: size,
     height: size,
     alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: v.color,
-      shape: BoxShape.circle,
-    ),
+    decoration: BoxDecoration(color: v.color, shape: BoxShape.circle),
     child: Icon(v.icon, color: Colors.white, size: size * 0.52),
   );
 }
@@ -360,12 +366,8 @@ Widget figmaFilterPill({
   Color? inactiveBg,
   Color? inactiveFg,
 }) {
-  final bg = selected
-      ? (activeBg ?? blue)
-      : (inactiveBg ?? Colors.white);
-  final fg = selected
-      ? (activeFg ?? Colors.white)
-      : (inactiveFg ?? muted);
+  final bg = selected ? (activeBg ?? blue) : (inactiveBg ?? Colors.white);
+  final fg = selected ? (activeFg ?? Colors.white) : (inactiveFg ?? muted);
   return GestureDetector(
     onTap: onTap,
     child: Container(
@@ -379,11 +381,7 @@ Widget figmaFilterPill({
       ),
       child: Text(
         label,
-        style: TextStyle(
-          color: fg,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600),
       ),
     ),
   );
@@ -721,10 +719,10 @@ class _EditFormState extends State<EditForm> {
     }
     setState(() => saving = true);
     try {
-      await store.command(widget.action, id: recordId, data: data);
+      await store.command(widget.action, id: widget.id, data: data);
       if (mounted) {
         Navigator.pop(context);
-        message(context, 'Đã lưu lên Firebase');
+        message(context, 'Đã thêm phòng mới thành công');
       }
     } catch (e) {
       if (mounted) message(context, errorText(e));
@@ -733,33 +731,37 @@ class _EditFormState extends State<EditForm> {
     }
   }
 
-  InputDecoration _boxDecoration({String? hint, Color? fill}) => InputDecoration(
-    hintText: hint,
-    hintStyle: const TextStyle(color: muted, fontSize: 13),
-    filled: true,
-    fillColor: fill ?? Colors.white,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide.none,
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: blue, width: 1.3),
-    ),
-    errorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1),
-    ),
-    focusedErrorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1.3),
-    ),
-  );
+  InputDecoration _boxDecoration({String? hint, Color? fill}) =>
+      InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: muted, fontSize: 13),
+        filled: true,
+        fillColor: fill ?? Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: blue, width: 1.3),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1.3),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) => PopScope(
@@ -771,7 +773,11 @@ class _EditFormState extends State<EditForm> {
           : AppBar(
               backgroundColor: canvas,
               leading: IconButton(
-                icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
+                icon: const Icon(
+                  Icons.chevron_left_rounded,
+                  size: 30,
+                  color: ink,
+                ),
                 onPressed: () => Navigator.maybePop(context),
               ),
               titleSpacing: 0,
@@ -842,7 +848,8 @@ class _EditFormState extends State<EditForm> {
                             key: ValueKey(
                               '${f.key}:${selected[f.key] ?? ''}:${f.options!.keys.join(',')}',
                             ),
-                            initialValue: f.options!.containsKey(selected[f.key])
+                            initialValue:
+                                f.options!.containsKey(selected[f.key])
                                 ? selected[f.key]
                                 : null,
                             isExpanded: true,
@@ -896,6 +903,10 @@ class _EditFormState extends State<EditForm> {
                             ? TextInputType.numberWithOptions(
                                 decimal: f.decimal,
                               )
+                            : f.key == 'phone'
+                            ? TextInputType.phone
+                            : f.key == 'email'
+                            ? TextInputType.emailAddress
                             : TextInputType.text,
                         maxLines: f.key == 'description' || f.key == 'note'
                             ? 3
@@ -912,6 +923,18 @@ class _EditFormState extends State<EditForm> {
                             return f.required
                                 ? 'Vui lòng nhập ${f.title}'
                                 : null;
+                          }
+                          if (f.key == 'email') {
+                            return validateEmail(text, required: f.required);
+                          }
+                          if (f.key == 'phone') {
+                            return validateVietnamesePhone(
+                              text,
+                              required: f.required,
+                            );
+                          }
+                          if (f.key == 'identity') {
+                            return validateIdentity(text, required: f.required);
                           }
                           if (f.number) {
                             final n = num.tryParse(text.replaceAll(',', '.'));
@@ -951,7 +974,9 @@ class _EditFormState extends State<EditForm> {
                   ),
                 ),
                 child: Text(
-                  saving ? 'Đang lưu...' : (widget.submitLabel ?? 'Lưu thay đổi'),
+                  saving
+                      ? 'Đang lưu...'
+                      : (widget.submitLabel ?? 'Lưu thay đổi'),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -991,3 +1016,242 @@ Widget photos(Record record) => Column(
       ),
   ],
 );
+
+
+class MoreMenuItem {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color? color;
+  final VoidCallback onTap;
+  const MoreMenuItem({
+    required this.value,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.color,
+  });
+}
+
+Widget moreActionsMenu({
+  VoidCallback? onEdit,
+  VoidCallback? onDelete,
+  String editLabel = 'Sửa',
+  String deleteLabel = 'Xóa',
+  IconData editIcon = Icons.edit_outlined,
+  IconData deleteIcon = Icons.delete_outline_rounded,
+  List<MoreMenuItem> extras = const [],
+  Color iconColor = muted,
+  double iconSize = 20,
+  EdgeInsetsGeometry padding = const EdgeInsets.all(4),
+}) {
+  if (onEdit == null && onDelete == null && extras.isEmpty) {
+    return const SizedBox.shrink();
+  }
+  return PopupMenuButton<String>(
+    tooltip: 'Tùy chọn',
+    padding: padding,
+    constraints: const BoxConstraints(minWidth: 148),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    color: Colors.white,
+    surfaceTintColor: Colors.transparent,
+    icon: Icon(Icons.more_vert_rounded, color: iconColor, size: iconSize),
+    onSelected: (value) {
+      if (value == 'edit') {
+        onEdit?.call();
+        return;
+      }
+      if (value == 'delete') {
+        onDelete?.call();
+        return;
+      }
+      for (final item in extras) {
+        if (item.value == value) {
+          item.onTap();
+          return;
+        }
+      }
+    },
+    itemBuilder: (context) => [
+      if (onEdit != null)
+        PopupMenuItem<String>(
+          value: 'edit',
+          child: Row(
+            children: [
+              Icon(editIcon, size: 18, color: blue),
+              const SizedBox(width: 10),
+              Text(
+                editLabel,
+                style: const TextStyle(
+                  color: ink,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      for (final item in extras)
+        PopupMenuItem<String>(
+          value: item.value,
+          child: Row(
+            children: [
+              Icon(item.icon, size: 18, color: item.color ?? ink),
+              const SizedBox(width: 10),
+              Text(
+                item.label,
+                style: TextStyle(
+                  color: item.color ?? ink,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      if (onDelete != null)
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(deleteIcon, size: 18, color: const Color(0xFFDC2626)),
+              const SizedBox(width: 10),
+              Text(
+                deleteLabel,
+                style: const TextStyle(
+                  color: Color(0xFFDC2626),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+    ],
+  );
+}
+
+Widget cccdImageWidget(
+  String src, {
+  double height = 120,
+  double width = double.infinity,
+  BoxFit fit = BoxFit.cover,
+  BorderRadius? borderRadius,
+  String emptyLabel = 'Chưa có ảnh CCCD',
+}) {
+  final radius = borderRadius ?? BorderRadius.circular(12);
+  final trimmed = src.trim();
+  if (trimmed.isEmpty) {
+    return Container(
+      height: height,
+      width: width,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: radius,
+        border: Border.all(color: line),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.badge_outlined, color: muted, size: 26),
+          const SizedBox(height: 6),
+          Text(
+            emptyLabel,
+            style: const TextStyle(color: muted, fontSize: 11.5),
+          ),
+        ],
+      ),
+    );
+  }
+  Widget img;
+  if (trimmed.startsWith('data:image')) {
+    final commaIdx = trimmed.indexOf(',');
+    final b64 = commaIdx >= 0 ? trimmed.substring(commaIdx + 1) : trimmed;
+    try {
+      final bytes = base64Decode(b64);
+      img = Image.memory(
+        bytes,
+        height: height,
+        width: width,
+        fit: fit,
+        errorBuilder: (_, _, _) => _brokenCccdBox(height, width, radius),
+      );
+    } catch (_) {
+      img = _brokenCccdBox(height, width, radius);
+    }
+  } else {
+    img = Image.network(
+      trimmed,
+      height: height,
+      width: width,
+      fit: fit,
+      errorBuilder: (_, _, _) => _brokenCccdBox(height, width, radius),
+    );
+  }
+  return ClipRRect(borderRadius: radius, child: img);
+}
+
+Widget _brokenCccdBox(double height, double width, BorderRadius radius) =>
+    Container(
+      height: height,
+      width: width,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: radius,
+        border: Border.all(color: line),
+      ),
+      child: const Text(
+        'Không hiển thị được ảnh',
+        style: TextStyle(color: muted, fontSize: 11.5),
+      ),
+    );
+
+void showCccdFullDialog(BuildContext context, String title, String src) {
+  if (src.trim().isEmpty) return;
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => Dialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      insetPadding: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: ink,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close_rounded, color: muted),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            InteractiveViewer(
+              child: cccdImageWidget(
+                src,
+                height: 260,
+                fit: BoxFit.contain,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}

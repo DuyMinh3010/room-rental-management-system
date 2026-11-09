@@ -156,3 +156,47 @@ class FormInput extends StatelessWidget {
     );
   }
 }
+
+
+Widget formLabel(String text, {bool required = false}) => Padding(
+  padding: const EdgeInsets.only(bottom: 6),
+  child: RichText(
+    text: TextSpan(
+      text: text,
+      style: const TextStyle(
+        color: Color(0xFF111827),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+      ),
+      children: [
+        if (required)
+          const TextSpan(
+            text: ' *',
+            style: TextStyle(color: Color(0xFFB60F0F)),
+          ),
+      ],
+    ),
+  ),
+);
+
+InputDecoration formDecoration({String? hint, Widget? suffixIcon}) =>
+    InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF168BFF), width: 1.4),
+      ),
+    );

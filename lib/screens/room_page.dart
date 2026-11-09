@@ -15,6 +15,36 @@ class RoomPage extends StatefulWidget {
 class _RoomPageState extends State<RoomPage> {
   String query = '', filter = 'Tất cả';
 
+  Future<void> _migrateLegacyData(BuildContext context) async {
+    if (!await confirm(
+      context,
+      'Gán các dữ liệu Firestore chưa có ownerId cho tài khoản chủ trọ đang đăng nhập? Chỉ tiếp tục nếu bạn là chủ sở hữu dữ liệu cũ.',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command('migrateOwnerData'),
+      'Đã khôi phục liên kết dữ liệu cũ. Danh sách phòng sẽ tự cập nhật.',
+    );
+  }
+
+  Future<void> _deleteRoom(BuildContext context, Record r) async {
+    if (!await confirm(
+      context,
+      'Xóa / lưu trữ phòng ${r.name}? Lịch sử hóa đơn vẫn được giữ.',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command('archiveRoom', id: r.id),
+      'Đã xóa phòng ${r.name}',
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: canvas,
@@ -22,11 +52,7 @@ class _RoomPageState extends State<RoomPage> {
       backgroundColor: canvas,
       title: const Text(
         'Danh sách phòng',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w600),
       ),
       actions: [
         const NotificationButton(),
@@ -43,7 +69,7 @@ class _RoomPageState extends State<RoomPage> {
       collection: 'rooms',
       builder: (_, all) {
         final rooms = all.where((r) => !r.archived).toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
+          ..sort((a, b) => naturalCompare(a.name, b.name));
         return RecordsView(
           collection: 'contracts',
           builder: (_, contracts) {
@@ -54,9 +80,9 @@ class _RoomPageState extends State<RoomPage> {
                 .substring(0, 10);
             bool rented(Record room) => contracts.any(
               (c) =>
+                  !c.archived &&
                   c.text('roomId') == room.id &&
-                  c.text('status') == 'active' &&
-                  c.text('startDate').compareTo(day) <= 0 &&
+                  ['active', 'scheduled'].contains(c.text('status')) &&
                   c.text('endDate').compareTo(day) >= 0,
             );
             final shown = rooms
@@ -106,8 +132,21 @@ class _RoomPageState extends State<RoomPage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                if (shown.isEmpty)
-                  empty('Chưa có phòng hoặc không khớp bộ lọc'),
+                if (shown.isEmpty) ...[
+                  empty(
+                    rooms.isEmpty
+                        ? 'Chưa tìm thấy phòng thuộc tài khoản này'
+                        : 'Không có phòng khớp bộ lọc',
+                  ),
+                  if (rooms.isEmpty)
+                    Center(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _migrateLegacyData(context),
+                        icon: const Icon(Icons.sync_rounded),
+                        label: const Text('Hiển thị dữ liệu phòng cũ'),
+                      ),
+                    ),
+                ],
                 for (final r in shown)
                   Builder(
                     builder: (context) {
@@ -127,12 +166,10 @@ class _RoomPageState extends State<RoomPage> {
                           color: Colors.transparent,
                           child: InkWell(
                             borderRadius: BorderRadius.circular(14),
-                            onTap: () => openPage(
-                              context,
-                              RoomDetailPage(roomId: r.id),
-                            ),
+                            onTap: () =>
+                                openPage(context, RoomDetailPage(roomId: r.id)),
                             child: Padding(
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.fromLTRB(12, 12, 6, 12),
                               child: Row(
                                 children: [
                                   Container(
@@ -204,10 +241,12 @@ class _RoomPageState extends State<RoomPage> {
                                       ],
                                     ),
                                   ),
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: muted,
-                                    size: 22,
+                                  moreActionsMenu(
+                                    onEdit: () => openPage(
+                                      context,
+                                      RoomEditPage(room: r),
+                                    ),
+                                    onDelete: () => _deleteRoom(context, r),
                                   ),
                                 ],
                               ),

@@ -12,12 +12,7 @@
           "package_name": "com.example.capstone1"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "744238998639-krci5o2vka5gnjfiagmkdv23ismp461q.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
           "current_key": "AIzaSyA_QH3zsofRlkvdf-rKWiNnBYiHt6FEL7w"
@@ -25,12 +20,7 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "744238998639-krci5o2vka5gnjfiagmkdv23ismp461q.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }

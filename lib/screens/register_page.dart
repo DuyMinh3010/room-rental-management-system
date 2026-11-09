@@ -1,8 +1,8 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../data/mock_data.dart';
+import '../utils/validators.dart';
 import '../widgets/common.dart';
-import 'verify_page.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -16,10 +16,11 @@ class _RegisterPageState extends State<RegisterPage> {
   final contact = TextEditingController();
   final password = TextEditingController();
   final confirm = TextEditingController();
-  String role = 'Chủ trọ';
   bool agreed = false;
   bool hidePass = true;
   bool hideConfirm = true;
+  bool busy = false;
+  String? emailAuthError, passwordAuthError, agreementError;
 
   @override
   void dispose() {
@@ -30,27 +31,48 @@ class _RegisterPageState extends State<RegisterPage> {
     super.dispose();
   }
 
-  void _register() {
-    if (!formKey.currentState!.validate()) return;
-    String? error;
-    if (password.text.length < 6) error = 'Mật khẩu cần ít nhất 6 ký tự';
-    if (password.text != confirm.text) error = 'Mật khẩu xác nhận chưa khớp';
-    if (!agreed) error = 'Bạn cần đồng ý điều khoản';
-    if (error != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error)));
-      return;
+  Future<void> _register() async {
+    if (busy) return;
+    setState(() {
+      agreementError = agreed ? null : 'Bạn cần đồng ý điều khoản';
+    });
+    if (!formKey.currentState!.validate() || !agreed) return;
+    setState(() => busy = true);
+    try {
+      final credential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(
+            email: contact.text.trim().toLowerCase(),
+            password: password.text,
+          );
+      final user = credential.user;
+      if (user == null) {
+        throw StateError('Firebase không trả về tài khoản vừa tạo');
+      }
+      await user.updateDisplayName(name.text.trim());
+      await user.sendEmailVerification();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (e is FirebaseAuthException) {
+          switch (e.code) {
+            case 'email-already-in-use':
+              emailAuthError = 'Email này đã được đăng ký';
+            case 'invalid-email':
+              emailAuthError = 'Email không hợp lệ';
+            case 'weak-password':
+              passwordAuthError = 'Mật khẩu chưa đủ mạnh';
+            default:
+              passwordAuthError = errorText(e);
+          }
+        } else {
+          passwordAuthError = errorText(e);
+        }
+      });
+      formKey.currentState?.validate();
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
-    final account = Map<String, String>.from(profile);
-    account['name'] = name.text.trim();
-    account['role'] = role;
-    account[contact.text.contains('@') ? 'email' : 'phone'] = contact.text
-        .trim();
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => VerifyPage(account: account)),
-    );
   }
 
   Widget _fieldLabel(String label) => Padding(
@@ -142,18 +164,21 @@ class _RegisterPageState extends State<RegisterPage> {
                 controller: name,
                 style: const TextStyle(fontSize: 13.5, color: ink),
                 decoration: _boxInput(),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Vui lòng nhập họ và tên' : null,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Vui lòng nhập họ và tên'
+                    : null,
               ),
               const SizedBox(height: 14),
-              _fieldLabel('Số điện thoại hoặc email'),
+              _fieldLabel('Email'),
               TextFormField(
                 controller: contact,
+                keyboardType: TextInputType.emailAddress,
                 style: const TextStyle(fontSize: 13.5, color: ink),
                 decoration: _boxInput(),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Vui lòng nhập SĐT hoặc email'
-                    : null,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                onChanged: (_) => setState(() => emailAuthError = null),
+                validator: (v) => emailAuthError ?? validateEmail(v),
               ),
               const SizedBox(height: 14),
               _fieldLabel('Mật khẩu'),
@@ -174,8 +199,13 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                   ),
                 ),
-                validator: (v) =>
-                    (v == null || v.isEmpty) ? 'Vui lòng nhập mật khẩu' : null,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                onChanged: (_) => setState(() => passwordAuthError = null),
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Vui lòng nhập mật khẩu';
+                  if (v.length < 6) return 'Mật khẩu cần ít nhất 6 ký tự';
+                  return passwordAuthError;
+                },
               ),
               const SizedBox(height: 14),
               _fieldLabel('Xác nhận mật khẩu'),
@@ -196,54 +226,23 @@ class _RegisterPageState extends State<RegisterPage> {
                     ),
                   ),
                 ),
-                validator: (v) => (v == null || v.isEmpty)
-                    ? 'Vui lòng xác nhận mật khẩu'
-                    : null,
-              ),
-              const SizedBox(height: 14),
-              _fieldLabel('Chọn vai trò của bạn'),
-              Container(
-                height: 44,
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  color: softBlue,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  children: [
-                    for (final item in const ['Chủ trọ', 'Người thuê'])
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => setState(() => role = item),
-                          child: Container(
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: role == item
-                                  ? Colors.white
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(11),
-                            ),
-                            child: Text(
-                              item,
-                              style: TextStyle(
-                                color: role == item
-                                    ? blue
-                                    : const Color(0xFF6B7280),
-                                fontSize: 12,
-                                fontWeight: role == item
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                validator: (v) {
+                  if (v == null || v.isEmpty) {
+                    return 'Vui lòng xác nhận mật khẩu';
+                  }
+                  if (v != password.text) {
+                    return 'Mật khẩu xác nhận chưa khớp';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 14),
               InkWell(
-                onTap: () => setState(() => agreed = !agreed),
+                onTap: () => setState(() {
+                  agreed = !agreed;
+                  if (agreed) agreementError = null;
+                }),
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
@@ -256,7 +255,10 @@ class _RegisterPageState extends State<RegisterPage> {
                         child: Checkbox(
                           value: agreed,
                           activeColor: blue,
-                          onChanged: (v) => setState(() => agreed = v ?? false),
+                          onChanged: (v) => setState(() {
+                            agreed = v ?? false;
+                            agreementError = agreed ? null : agreementError;
+                          }),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -274,19 +276,30 @@ class _RegisterPageState extends State<RegisterPage> {
                   ),
                 ),
               ),
+              if (agreementError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, left: 30),
+                  child: Text(
+                    agreementError!,
+                    style: const TextStyle(
+                      color: Color(0xFFB60F0F),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 26),
               SizedBox(
                 height: 52,
                 child: FilledButton(
-                  onPressed: _register,
+                  onPressed: busy ? null : _register,
                   style: FilledButton.styleFrom(
                     backgroundColor: blue,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: const Text(
-                    'Gửi yêu cầu',
+                  child: Text(
+                    busy ? 'Đang tạo tài khoản...' : 'Tạo tài khoản',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                 ),

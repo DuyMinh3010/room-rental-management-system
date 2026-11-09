@@ -40,6 +40,10 @@ test("tạo phòng, dịch vụ, chỉ số, người thuê, hợp đồng và h
     id: "workflow-electric",
     data: { name: "Điện test", mode: "meter", price: 3500, unit: "kWh" },
   });
+  assert.equal(
+    (await db.doc("services/workflow-electric").get()).data().id,
+    "workflow-electric",
+  );
   await call("assignServices", {
     roomId: "workflow-room",
     serviceIds: ["workflow-electric"],
@@ -54,6 +58,20 @@ test("tạo phòng, dịch vụ, chỉ số, người thuê, hợp đồng và h
       endDate: "2099-12-31",
     },
   });
+  assert.equal((await db.doc("rooms/workflow-room").get()).data().ownerId, "owner");
+  assert.equal(
+    (await db.doc("tenants/workflow-tenant").get()).data().ownerId,
+    "owner",
+  );
+  assert.equal(
+    (await db.doc("contracts/workflow-contract").get()).data().ownerId,
+    "owner",
+  );
+  await db.doc("managers/other-owner").set({ enabled: true });
+  await assert.rejects(
+    () => call("archiveRoom", { id: "workflow-room" }, "other-owner"),
+    /không thuộc tài khoản chủ trọ này/,
+  );
   await assert.rejects(
     () =>
       call("issueInvoice", {
@@ -98,6 +116,7 @@ test("tạo phòng, dịch vụ, chỉ số, người thuê, hợp đồng và h
     .get();
   assert.equal(bills.size, 1);
   assert.equal(bills.docs[0].data().total, 3620000);
+  assert.equal(bills.docs[0].data().ownerId, "owner");
   await assert.rejects(
     () =>
       call("saveMeter", {
@@ -143,6 +162,40 @@ test("hai thao tác cùng thêm tên phòng chỉ một thao tác thành công",
   ]);
   assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
 });
+test("chuẩn hóa ID dịch vụ cũ chỉ trong phạm vi chủ trọ đang đăng nhập", async () => {
+  await db.doc("services/legacy-service").set({
+    ownerId: "owner",
+    name: "Dịch vụ cũ",
+    mode: "room",
+    price: 50000,
+  });
+  await db.doc("services/other-owner-service").set({
+    ownerId: "other-owner",
+    name: "Dịch vụ chủ khác",
+    mode: "room",
+    price: 50000,
+  });
+
+  const ownServices = await db
+    .collection("services")
+    .where("ownerId", "==", "owner")
+    .get();
+  const expectedUpdates = ownServices.docs.filter(
+    (doc) => doc.data().id !== doc.id,
+  ).length;
+  const result = await call("migrateServiceIds");
+
+  assert.ok(expectedUpdates > 0);
+  assert.equal(result.updated, expectedUpdates);
+  assert.equal(
+    (await db.doc("services/legacy-service").get()).data().id,
+    "legacy-service",
+  );
+  assert.equal(
+    (await db.doc("services/other-owner-service").get()).data().id,
+    undefined,
+  );
+});
 test("hợp đồng chốt giá từ phòng, không lấy giá thuê do client gửi", async () => {
   const c = (await db.doc("contracts/workflow-contract").get()).data();
   assert.equal(c.rent, 3500000);
@@ -169,6 +222,7 @@ test("nhắc quá hạn hơn 5 ngày một lần, tenant không tự đánh dấ
   await db
     .doc("invoices/test-overdue")
     .set({
+      ownerId: "owner",
       roomId: "workflow-room",
       roomName: "TEST WORKFLOW",
       period: "2026-01",
@@ -177,7 +231,10 @@ test("nhắc quá hạn hơn 5 ngày một lần, tenant không tự đánh dấ
       total: 100000,
       recipientUid: "tenant",
     });
-  await db.doc("settings/landlord").set({ autoBilling: false });
+  await db.doc("settings/owner").set({
+    ownerId: "owner",
+    autoBilling: false,
+  });
   await call("runBilling");
   await call("runBilling");
   assert.equal(
