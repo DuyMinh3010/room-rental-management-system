@@ -26,6 +26,25 @@ class InvoicePage extends StatefulWidget {
 class _InvoicePageState extends State<InvoicePage> {
   String filter = 'all', query = '';
 
+  Future<void> _deleteInvoice(BuildContext context, Record b) async {
+    if (!await confirm(
+      context,
+      'Xóa hóa đơn ${b.text('code', b.id)} của phòng ${b.text('roomName')}? Sau khi xóa hoặc hủy, bạn có thể tạo lại hóa đơn mới cho phòng này trong cùng kỳ.',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command(
+        'deleteInvoice',
+        id: b.id,
+        args: {'reason': 'Đã xóa hóa đơn'},
+      ),
+      'Đã xóa hóa đơn. Bạn có thể tạo lại hóa đơn mới cho kỳ này.',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentMonth = periodOf();
@@ -73,7 +92,8 @@ class _InvoicePageState extends State<InvoicePage> {
       ),
       body: RecordsView(
         collection: 'invoices',
-        builder: (_, all) {
+        builder: (_, rawAll) {
+          final all = rawAll.where((b) => !b.archived).toList();
           final bills = all
               .where(
                 (b) =>
@@ -180,6 +200,12 @@ class _InvoicePageState extends State<InvoicePage> {
                       'unpaid',
                       'reported',
                     ].contains(b.text('status'));
+                    final paidTimeText = b.text('paidDateTime').isNotEmpty
+                        ? b.text('paidDateTime')
+                        : formatDateTimeVi(
+                            b.time('paidAt'),
+                            b.text('paidDate'),
+                          );
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       decoration: BoxDecoration(
@@ -194,7 +220,7 @@ class _InvoicePageState extends State<InvoicePage> {
                           InvoiceDetailPage(invoiceId: b.id),
                         ),
                         child: Padding(
-                          padding: const EdgeInsets.all(14),
+                          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -214,9 +240,16 @@ class _InvoicePageState extends State<InvoicePage> {
                                   ),
                                   const SizedBox(width: 8),
                                   statusPill(b.text('status')),
+                                  moreActionsMenu(
+                                    onEdit: () => openPage(
+                                      context,
+                                      InvoiceDetailPage(invoiceId: b.id),
+                                    ),
+                                    onDelete: () => _deleteInvoice(context, b),
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 5),
+                              const SizedBox(height: 4),
                               Text(
                                 '${b.text('tenantName')}  •  ${formatPeriodRange(b.text('period'))}',
                                 maxLines: 1,
@@ -228,10 +261,18 @@ class _InvoicePageState extends State<InvoicePage> {
                               ),
                               const SizedBox(height: 3),
                               Text(
-                                'Hạn thanh toán: ${b.text('dueDate')}',
-                                style: const TextStyle(
-                                  color: muted,
+                                b.text('status') == 'paid' &&
+                                        paidTimeText.isNotEmpty
+                                    ? 'Ngày giờ thanh toán: $paidTimeText'
+                                    : 'Hạn thanh toán: ${b.text('dueDate')}',
+                                style: TextStyle(
+                                  color: b.text('status') == 'paid'
+                                      ? const Color(0xFF16A34A)
+                                      : muted,
                                   fontSize: 10.5,
+                                  fontWeight: b.text('status') == 'paid'
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
                                 ),
                               ),
                               const SizedBox(height: 10),
@@ -268,17 +309,11 @@ class _InvoicePageState extends State<InvoicePage> {
                                     )
                                   else if (b.text('method').isNotEmpty)
                                     Text(
-                                      'QR • ${label(b.text('method'))}',
+                                      label(b.text('method')),
                                       style: const TextStyle(
                                         color: muted,
                                         fontSize: 11,
                                       ),
-                                    )
-                                  else
-                                    const Icon(
-                                      Icons.chevron_right_rounded,
-                                      color: muted,
-                                      size: 20,
                                     ),
                                 ],
                               ),

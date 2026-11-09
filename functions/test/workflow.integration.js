@@ -40,6 +40,10 @@ test("tạo phòng, dịch vụ, chỉ số, người thuê, hợp đồng và h
     id: "workflow-electric",
     data: { name: "Điện test", mode: "meter", price: 3500, unit: "kWh" },
   });
+  assert.equal(
+    (await db.doc("services/workflow-electric").get()).data().id,
+    "workflow-electric",
+  );
   await call("assignServices", {
     roomId: "workflow-room",
     serviceIds: ["workflow-electric"],
@@ -157,6 +161,40 @@ test("hai thao tác cùng thêm tên phòng chỉ một thao tác thành công",
     call("saveRoom", { id: "unique2", data }),
   ]);
   assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
+});
+test("chuẩn hóa ID dịch vụ cũ chỉ trong phạm vi chủ trọ đang đăng nhập", async () => {
+  await db.doc("services/legacy-service").set({
+    ownerId: "owner",
+    name: "Dịch vụ cũ",
+    mode: "room",
+    price: 50000,
+  });
+  await db.doc("services/other-owner-service").set({
+    ownerId: "other-owner",
+    name: "Dịch vụ chủ khác",
+    mode: "room",
+    price: 50000,
+  });
+
+  const ownServices = await db
+    .collection("services")
+    .where("ownerId", "==", "owner")
+    .get();
+  const expectedUpdates = ownServices.docs.filter(
+    (doc) => doc.data().id !== doc.id,
+  ).length;
+  const result = await call("migrateServiceIds");
+
+  assert.ok(expectedUpdates > 0);
+  assert.equal(result.updated, expectedUpdates);
+  assert.equal(
+    (await db.doc("services/legacy-service").get()).data().id,
+    "legacy-service",
+  );
+  assert.equal(
+    (await db.doc("services/other-owner-service").get()).data().id,
+    undefined,
+  );
 });
 test("hợp đồng chốt giá từ phòng, không lấy giá thuê do client gửi", async () => {
   const c = (await db.doc("contracts/workflow-contract").get()).data();

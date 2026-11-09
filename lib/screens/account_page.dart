@@ -193,6 +193,16 @@ class AccountPage extends StatelessWidget {
                     },
                   ),
                   _AccountMenuRow(
+                    title: 'Cập nhật ID dịch vụ cũ',
+                    subtitle:
+                        'Đồng bộ ID dịch vụ theo document ID, chỉ trong dữ liệu của bạn',
+                    onTap: () => perform(
+                      context,
+                      () => store.command('migrateServiceIds'),
+                      'Đã cập nhật ID dịch vụ cũ',
+                    ),
+                  ),
+                  _AccountMenuRow(
                     title: 'Hợp đồng & kiểm tra hóa đơn',
                     subtitle: 'Chạy kiểm tra hóa đơn đến kỳ và quá hạn',
                     onTap: () => perform(

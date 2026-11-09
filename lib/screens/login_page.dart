@@ -1,9 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-
 import '../utils/validators.dart';
 import '../widgets/common.dart';
 import 'register_page.dart';
+
+enum _LoginRole { landlord, tenant }
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -16,7 +18,9 @@ class _LoginPageState extends State<LoginPage> {
   final emailFieldKey = GlobalKey<FormFieldState<String>>();
   final email = TextEditingController(), password = TextEditingController();
   bool busy = false, hidden = true;
+  _LoginRole? selectedRole;
   String? emailAuthError, passwordAuthError;
+  String? roleAuthError;
 
   @override
   void dispose() {
@@ -26,17 +30,48 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _login() async {
-    if (busy || !formKey.currentState!.validate()) return;
+    if (busy) return;
+    if (selectedRole == null) {
+      setState(() => roleAuthError = 'Vui lòng chọn Chủ trọ hoặc Người thuê');
+      return;
+    }
+    if (!formKey.currentState!.validate()) return;
     setState(() {
       emailAuthError = null;
       passwordAuthError = null;
+      roleAuthError = null;
       busy = true;
     });
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email.text.trim(),
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email.text.trim().toLowerCase(),
         password: password.text,
       );
+      final user = credential.user;
+      if (user == null) {
+        throw StateError('Firebase không trả về tài khoản vừa đăng nhập');
+      }
+      DocumentSnapshot<Map<String, dynamic>> manager;
+      try {
+        manager = await FirebaseFirestore.instance
+            .collection('managers')
+            .doc(user.uid)
+            .get();
+      } catch (_) {
+        await FirebaseAuth.instance.signOut();
+        rethrow;
+      }
+      final isLandlord = manager.data()?['enabled'] == true;
+      if (isLandlord != (selectedRole == _LoginRole.landlord)) {
+        await FirebaseAuth.instance.signOut();
+        if (mounted) {
+          setState(() {
+            roleAuthError = isLandlord
+                ? 'Tài khoản này là Chủ trọ. Hãy chọn đúng vai trò để đăng nhập.'
+                : 'Tài khoản này chưa được cấp quyền Chủ trọ. Hãy chọn Người thuê hoặc liên hệ chủ hệ thống.';
+          });
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -78,7 +113,7 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => emailAuthError = null);
     try {
       await FirebaseAuth.instance.sendPasswordResetEmail(
-        email: email.text.trim(),
+        email: email.text.trim().toLowerCase(),
       );
       if (mounted) {
         message(context, 'Nếu email hợp lệ, hãy kiểm tra thư đặt lại mật khẩu');
@@ -121,6 +156,51 @@ class _LoginPageState extends State<LoginPage> {
       borderSide: const BorderSide(color: blue, width: 1.4),
     ),
   );
+
+  Widget _roleButton(_LoginRole role, String label, IconData icon) {
+    final selected = selectedRole == role;
+    return Expanded(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: busy
+              ? null
+              : () => setState(() {
+                  selectedRole = role;
+                  roleAuthError = null;
+                }),
+          child: Container(
+            height: 46,
+            decoration: BoxDecoration(
+              color: selected ? softBlue : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected ? blue : line,
+                width: selected ? 1.3 : 1,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18, color: selected ? blue : muted),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? blue : ink,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -214,7 +294,42 @@ class _LoginPageState extends State<LoginPage> {
                           fontSize: 13,
                         ),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Đăng nhập với vai trò',
+                        style: TextStyle(
+                          color: ink,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          _roleButton(
+                            _LoginRole.landlord,
+                            'Chủ trọ',
+                            Icons.home_work_outlined,
+                          ),
+                          const SizedBox(width: 10),
+                          _roleButton(
+                            _LoginRole.tenant,
+                            'Người thuê',
+                            Icons.person_outline_rounded,
+                          ),
+                        ],
+                      ),
+                      if (roleAuthError != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          roleAuthError!,
+                          style: const TextStyle(
+                            color: Color(0xFFB91C1C),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
                       const Text(
                         'Email',
                         style: TextStyle(

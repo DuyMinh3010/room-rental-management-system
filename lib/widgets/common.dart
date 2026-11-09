@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/record.dart';
@@ -718,10 +719,10 @@ class _EditFormState extends State<EditForm> {
     }
     setState(() => saving = true);
     try {
-      await store.command(widget.action, id: recordId, data: data);
+      await store.command(widget.action, id: widget.id, data: data);
       if (mounted) {
         Navigator.pop(context);
-        message(context, 'Đã lưu lên Firebase');
+        message(context, 'Đã thêm phòng mới thành công');
       }
     } catch (e) {
       if (mounted) message(context, errorText(e));
@@ -1015,3 +1016,242 @@ Widget photos(Record record) => Column(
       ),
   ],
 );
+
+
+class MoreMenuItem {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color? color;
+  final VoidCallback onTap;
+  const MoreMenuItem({
+    required this.value,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.color,
+  });
+}
+
+Widget moreActionsMenu({
+  VoidCallback? onEdit,
+  VoidCallback? onDelete,
+  String editLabel = 'Sửa',
+  String deleteLabel = 'Xóa',
+  IconData editIcon = Icons.edit_outlined,
+  IconData deleteIcon = Icons.delete_outline_rounded,
+  List<MoreMenuItem> extras = const [],
+  Color iconColor = muted,
+  double iconSize = 20,
+  EdgeInsetsGeometry padding = const EdgeInsets.all(4),
+}) {
+  if (onEdit == null && onDelete == null && extras.isEmpty) {
+    return const SizedBox.shrink();
+  }
+  return PopupMenuButton<String>(
+    tooltip: 'Tùy chọn',
+    padding: padding,
+    constraints: const BoxConstraints(minWidth: 148),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    color: Colors.white,
+    surfaceTintColor: Colors.transparent,
+    icon: Icon(Icons.more_vert_rounded, color: iconColor, size: iconSize),
+    onSelected: (value) {
+      if (value == 'edit') {
+        onEdit?.call();
+        return;
+      }
+      if (value == 'delete') {
+        onDelete?.call();
+        return;
+      }
+      for (final item in extras) {
+        if (item.value == value) {
+          item.onTap();
+          return;
+        }
+      }
+    },
+    itemBuilder: (context) => [
+      if (onEdit != null)
+        PopupMenuItem<String>(
+          value: 'edit',
+          child: Row(
+            children: [
+              Icon(editIcon, size: 18, color: blue),
+              const SizedBox(width: 10),
+              Text(
+                editLabel,
+                style: const TextStyle(
+                  color: ink,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      for (final item in extras)
+        PopupMenuItem<String>(
+          value: item.value,
+          child: Row(
+            children: [
+              Icon(item.icon, size: 18, color: item.color ?? ink),
+              const SizedBox(width: 10),
+              Text(
+                item.label,
+                style: TextStyle(
+                  color: item.color ?? ink,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      if (onDelete != null)
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(deleteIcon, size: 18, color: const Color(0xFFDC2626)),
+              const SizedBox(width: 10),
+              Text(
+                deleteLabel,
+                style: const TextStyle(
+                  color: Color(0xFFDC2626),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+    ],
+  );
+}
+
+Widget cccdImageWidget(
+  String src, {
+  double height = 120,
+  double width = double.infinity,
+  BoxFit fit = BoxFit.cover,
+  BorderRadius? borderRadius,
+  String emptyLabel = 'Chưa có ảnh CCCD',
+}) {
+  final radius = borderRadius ?? BorderRadius.circular(12);
+  final trimmed = src.trim();
+  if (trimmed.isEmpty) {
+    return Container(
+      height: height,
+      width: width,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: radius,
+        border: Border.all(color: line),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.badge_outlined, color: muted, size: 26),
+          const SizedBox(height: 6),
+          Text(
+            emptyLabel,
+            style: const TextStyle(color: muted, fontSize: 11.5),
+          ),
+        ],
+      ),
+    );
+  }
+  Widget img;
+  if (trimmed.startsWith('data:image')) {
+    final commaIdx = trimmed.indexOf(',');
+    final b64 = commaIdx >= 0 ? trimmed.substring(commaIdx + 1) : trimmed;
+    try {
+      final bytes = base64Decode(b64);
+      img = Image.memory(
+        bytes,
+        height: height,
+        width: width,
+        fit: fit,
+        errorBuilder: (_, _, _) => _brokenCccdBox(height, width, radius),
+      );
+    } catch (_) {
+      img = _brokenCccdBox(height, width, radius);
+    }
+  } else {
+    img = Image.network(
+      trimmed,
+      height: height,
+      width: width,
+      fit: fit,
+      errorBuilder: (_, _, _) => _brokenCccdBox(height, width, radius),
+    );
+  }
+  return ClipRRect(borderRadius: radius, child: img);
+}
+
+Widget _brokenCccdBox(double height, double width, BorderRadius radius) =>
+    Container(
+      height: height,
+      width: width,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: radius,
+        border: Border.all(color: line),
+      ),
+      child: const Text(
+        'Không hiển thị được ảnh',
+        style: TextStyle(color: muted, fontSize: 11.5),
+      ),
+    );
+
+void showCccdFullDialog(BuildContext context, String title, String src) {
+  if (src.trim().isEmpty) return;
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => Dialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      insetPadding: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: ink,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close_rounded, color: muted),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            InteractiveViewer(
+              child: cccdImageWidget(
+                src,
+                height: 260,
+                fit: BoxFit.contain,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}

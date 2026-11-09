@@ -16,6 +16,30 @@ void main() {
 
     expect(find.text('RRMS'), findsOneWidget);
     expect(find.text('Đăng nhập'), findsWidgets);
+    expect(find.text('Đăng nhập với vai trò'), findsOneWidget);
+    expect(find.text('Chủ trọ'), findsOneWidget);
+    expect(find.text('Người thuê'), findsOneWidget);
+  });
+
+  testWidgets('login role can be selected before entering credentials', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    await tester.tap(find.text('Chủ trọ'));
+    await tester.pump();
+
+    expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsNothing);
+  });
+
+  testWidgets('login requires selecting a role', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
+    await tester.pump();
+
+    expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsOneWidget);
   });
 
   testWidgets('login validation is shown under each field', (
@@ -23,6 +47,8 @@ void main() {
   ) async {
     await tester.pumpWidget(const MaterialApp(home: LoginPage()));
 
+    await tester.tap(find.text('Người thuê'));
+    await tester.pump();
     await tester.ensureVisible(find.widgetWithText(FilledButton, 'Đăng nhập'));
     await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
     await tester.pumpAndSettle();

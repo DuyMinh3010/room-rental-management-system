@@ -5,11 +5,23 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="221dc0e9-398f-48ad-b198-822b24b159a0" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Flutter_Plugins.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Flutter_Plugins.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/firebase.json" beforeDir="false" afterPath="$PROJECT_DIR$/firebase.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/data/mock_data.dart" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/firebase_options.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/firebase_options.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/android/gradle.properties" beforeDir="false" afterPath="$PROJECT_DIR$/android/gradle.properties" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/android/gradle/wrapper/gradle-wrapper.properties" beforeDir="false" afterPath="$PROJECT_DIR$/android/gradle/wrapper/gradle-wrapper.properties" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/firebase/firestore.rules" beforeDir="false" afterPath="$PROJECT_DIR$/firebase/firestore.rules" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/firestore.indexes.json" beforeDir="false" afterPath="$PROJECT_DIR$/firestore.indexes.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/firestore.rules" beforeDir="false" afterPath="$PROJECT_DIR$/firestore.rules" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/functions/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/functions/index.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/functions/test/rules.integration.js" beforeDir="false" afterPath="$PROJECT_DIR$/functions/test/rules.integration.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/functions/test/workflow.integration.js" beforeDir="false" afterPath="$PROJECT_DIR$/functions/test/workflow.integration.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib.zip" beforeDir="false" afterPath="$PROJECT_DIR$/lib.zip" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/models/record.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/models/record.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/account_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/account_page.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/app_shell.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/app_shell.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/contract_detail_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/contract_detail_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/contract_edit_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/contract_edit_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/contract_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/contract_page.dart" afterDir="false" />
@@ -17,15 +29,25 @@
       <change beforePath="$PROJECT_DIR$/lib/screens/invoice_detail_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/invoice_detail_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/invoice_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/invoice_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/login_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/login_page.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/maint_create_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/maint_create_page.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/maintenance_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/maintenance_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/register_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/register_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/room_detail_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/room_detail_page.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/screens/room_edit_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/room_edit_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/room_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/room_page.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/screens/service_edit_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/service_edit_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/service_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/service_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/tenant_detail_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/tenant_detail_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/tenant_edit_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/tenant_edit_page.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/lib/screens/tenant_list_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/tenant_list_page.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/screens/verify_page.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/screens/verify_page.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/app_store.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/app_store.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/billing.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/billing.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/document_service.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/document_service.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/spark_commands.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/spark_commands.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/common.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/common.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/widgets/form_widgets.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/widgets/form_widgets.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pubspec.lock" beforeDir="false" afterPath="$PROJECT_DIR$/pubspec.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pubspec.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/pubspec.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/widget_test.dart" beforeDir="false" afterPath="$PROJECT_DIR$/test/widget_test.dart" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -67,7 +89,7 @@
     &quot;io.flutter.project.isFirstOpen&quot;: &quot;true&quot;,
     &quot;io.flutter.reload.alreadyRun&quot;: &quot;true&quot;,
     &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/asus/Downloads/capstone1 (2)/capstone1&quot;,
+    &quot;last_opened_file_path&quot;: &quot;e:/capstone1&quot;,
     &quot;show.migrate.to.gradle.popup&quot;: &quot;false&quot;
   }
 }</component>
@@ -97,7 +119,7 @@
         </line-breakpoint>
         <line-breakpoint enabled="true" type="Dart">
           <url>file://$PROJECT_DIR$/lib/screens/tenant_list_page.dart</url>
-          <line>54</line>
+          <line>64</line>
           <option name="timeStamp" value="2" />
         </line-breakpoint>
       </breakpoints>

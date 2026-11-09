@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/record.dart';
 import '../utils/validators.dart';
 import '../widgets/common.dart';
+import '../widgets/form_widgets.dart';
 
 String _normalizeDateInput(String raw) {
   final t = raw.trim();
@@ -53,14 +54,18 @@ class ContractEditPage extends StatefulWidget {
 
 class _ContractEditPageState extends State<ContractEditPage> {
   final _formKey = GlobalKey<FormState>();
-  late final String _recordId;
   late final TextEditingController _numberCtrl;
   late final TextEditingController _startCtrl;
   late final TextEditingController _endCtrl;
+  late final TextEditingController _rentCtrl;
+  late final TextEditingController _depositCtrl;
+  late final TextEditingController _initialElectricCtrl;
+  late final TextEditingController _initialWaterCtrl;
   late final TextEditingController _noteCtrl;
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _identityCtrl = TextEditingController();
+
   String? _roomId;
   String? _tenantId;
   String? _contactTenantId;
@@ -69,12 +74,12 @@ class _ContractEditPageState extends State<ContractEditPage> {
   late Set<String> _existingMemberIds;
   Set<String>? _serviceIds;
   bool _saving = false;
+  bool _didPrefillRoomPricing = false;
 
   @override
   void initState() {
     super.initState();
     final c = widget.contract;
-    _recordId = c?.id ?? store.db.collection('_').doc().id;
     _roomId = c?.text('roomId') ?? widget.initialRoomId;
     _tenantId = c?.text('tenantId') ?? widget.initialTenantId;
     _useExistingTenant = c != null || widget.initialTenantId != null;
@@ -107,7 +112,26 @@ class _ContractEditPageState extends State<ContractEditPage> {
           ? c!.text('endDate')
           : defaultEnd,
     );
+    _rentCtrl = TextEditingController(
+      text: c?.number('rent') != null ? '${c!.number('rent')!.round()}' : '',
+    );
+    _depositCtrl = TextEditingController(
+      text: c?.number('deposit') != null
+          ? '${c!.number('deposit')!.round()}'
+          : '',
+    );
+    _initialElectricCtrl = TextEditingController(
+      text: c?.number('initialElectric') != null
+          ? '${c!.number('initialElectric')}'
+          : '0',
+    );
+    _initialWaterCtrl = TextEditingController(
+      text: c?.number('initialWater') != null
+          ? '${c!.number('initialWater')}'
+          : '0',
+    );
     _noteCtrl = TextEditingController(text: c?.text('note') ?? '');
+    if (c != null) _didPrefillRoomPricing = true;
   }
 
   @override
@@ -115,6 +139,10 @@ class _ContractEditPageState extends State<ContractEditPage> {
     _numberCtrl.dispose();
     _startCtrl.dispose();
     _endCtrl.dispose();
+    _rentCtrl.dispose();
+    _depositCtrl.dispose();
+    _initialElectricCtrl.dispose();
+    _initialWaterCtrl.dispose();
     _noteCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
@@ -130,13 +158,42 @@ class _ContractEditPageState extends State<ContractEditPage> {
 
   void _addTenantDraft() {
     setState(() {
-      _tenantDrafts.add(_newTenantDraft('member'));
+      final hasLeader =
+          _useExistingTenant || _tenantDrafts.any((t) => t.role == 'leader');
+      _tenantDrafts.add(_newTenantDraft(hasLeader ? 'member' : 'leader'));
     });
   }
 
   void _removeTenantDraft(_TenantDraft draft) {
-    setState(() => _tenantDrafts.remove(draft));
+    setState(() {
+      final wasLeader = draft.role == 'leader';
+      _tenantDrafts.remove(draft);
+      if (wasLeader && !_useExistingTenant && _tenantDrafts.isNotEmpty) {
+        _tenantDrafts.first.role = 'leader';
+      }
+    });
     draft.dispose();
+  }
+
+  void _selectDraftRole(_TenantDraft target, String role) {
+    setState(() {
+      if (role == 'leader') {
+        for (final t in _tenantDrafts) {
+          t.role = t == target ? 'leader' : 'member';
+        }
+      } else {
+        target.role = 'member';
+        if (!_useExistingTenant &&
+            !_tenantDrafts.any((t) => t.role == 'leader') &&
+            _tenantDrafts.isNotEmpty) {
+          final fallback = _tenantDrafts.firstWhere(
+            (t) => t != target,
+            orElse: () => target,
+          );
+          fallback.role = 'leader';
+        }
+      }
+    });
   }
 
   void _setContact(Record? tenant) {
@@ -145,6 +202,14 @@ class _ContractEditPageState extends State<ContractEditPage> {
     _phoneCtrl.text = tenant?.text('phone') ?? '';
     _emailCtrl.text = tenant?.text('email') ?? '';
     _identityCtrl.text = tenant?.text('identity') ?? '';
+  }
+
+  void _applyRoomDefaults(Record? room) {
+    if (room == null) return;
+    _rentCtrl.text = '${(room.number('price') ?? 0).round()}';
+    _depositCtrl.text = '${(room.number('deposit') ?? 0).round()}';
+    _initialElectricCtrl.text = '${room.number('initialElectric') ?? 0}';
+    _initialWaterCtrl.text = '${room.number('initialWater') ?? 0}';
   }
 
   Widget _contactField(String label, TextEditingController controller) =>
@@ -188,10 +253,17 @@ class _ContractEditPageState extends State<ContractEditPage> {
     }
   }
 
-  Future<void> _save() async {
+  Future<void> _save(Set<String> occupiedRoomIds) async {
     if (_saving || !_formKey.currentState!.validate()) return;
     if (_roomId == null || _roomId!.isEmpty) {
       message(context, 'Vui lòng chọn phòng');
+      return;
+    }
+    if (occupiedRoomIds.contains(_roomId)) {
+      message(
+        context,
+        'Phòng này đang có hợp đồng hiệu lực. Chỉ phòng Trống mới được phép tạo hợp đồng mới!',
+      );
       return;
     }
     final tenants = _tenantDrafts
@@ -199,19 +271,51 @@ class _ContractEditPageState extends State<ContractEditPage> {
         .toList();
     if (widget.contract == null && _useExistingTenant) {
       if (_tenantId == null || _tenantId!.isEmpty) {
-        message(context, 'Vui lòng chọn người đứng hợp đồng');
+        message(context, 'Vui lòng chọn Trưởng phòng (Người đứng hợp đồng)');
         return;
       }
     } else if (widget.contract == null) {
       final leaders = tenants.where((t) => t.role == 'leader').length;
       if (tenants.isEmpty || leaders != 1) {
-        message(context, 'Nhập người thuê và chọn đúng một trưởng phòng');
+        message(
+          context,
+          'Vui lòng nhập người thuê và chọn duy nhất 1 Trưởng phòng',
+        );
         return;
       }
     } else if (_tenantId == null || _tenantId!.isEmpty) {
-      message(context, 'Vui lòng chọn người thuê thuộc phòng đã chọn');
+      message(context, 'Vui lòng chọn Trưởng phòng thuộc phòng đã chọn');
       return;
     }
+    final rent = num.tryParse(
+      _rentCtrl.text.trim().replaceAll('.', '').replaceAll(',', ''),
+    );
+    final deposit = num.tryParse(
+      _depositCtrl.text.trim().replaceAll('.', '').replaceAll(',', ''),
+    );
+    final initialElectric = num.tryParse(
+      _initialElectricCtrl.text.trim().replaceAll(',', '.'),
+    );
+    final initialWater = num.tryParse(
+      _initialWaterCtrl.text.trim().replaceAll(',', '.'),
+    );
+    if (rent == null || rent <= 0) {
+      message(context, 'Tiền phòng không hợp lệ');
+      return;
+    }
+    if (deposit == null || deposit < 0) {
+      message(context, 'Tiền đặt cọc không hợp lệ');
+      return;
+    }
+    if (initialElectric == null || initialElectric < 0) {
+      message(context, 'Chỉ số điện ban đầu không hợp lệ');
+      return;
+    }
+    if (initialWater == null || initialWater < 0) {
+      message(context, 'Chỉ số nước ban đầu không hợp lệ');
+      return;
+    }
+
     final data = <String, dynamic>{
       'roomId': _roomId,
       'tenantId': widget.contract == null && !_useExistingTenant
@@ -242,13 +346,17 @@ class _ContractEditPageState extends State<ContractEditPage> {
       'number': widget.contract == null ? '' : _numberCtrl.text.trim(),
       'startDate': _normalizeDateInput(_startCtrl.text),
       'endDate': _normalizeDateInput(_endCtrl.text),
+      'rent': rent.round(),
+      'deposit': deposit.round(),
+      'initialElectric': initialElectric,
+      'initialWater': initialWater,
       'note': _noteCtrl.text.trim(),
     };
     setState(() => _saving = true);
     try {
       final result = await store.command(
         'saveContract',
-        id: _recordId,
+        id: widget.contract?.id,
         data: data,
       );
       if (mounted) {
@@ -379,10 +487,30 @@ class _ContractEditPageState extends State<ContractEditPage> {
                       rs
                           .where((r) => !r.archived && r.condition == 'Tốt')
                           .toList()
-                        ..sort((a, b) => a.name.compareTo(b.name));
+                        ..sort((a, b) => naturalCompare(a.name, b.name));
+
+                  // Các phòng đang có hợp đồng hiệu lực (ngoại trừ hợp đồng đang sửa)
+                  final occupiedRoomIds = contracts
+                      .where(
+                        (c) =>
+                            !c.archived &&
+                            c.id != widget.contract?.id &&
+                            ['active', 'scheduled'].contains(c.text('status')),
+                      )
+                      .map((c) => c.text('roomId'))
+                      .toSet();
+
                   final selectedRoom = rooms
                       .where((r) => r.id == _roomId)
                       .firstOrNull;
+                  if (!_didPrefillRoomPricing && selectedRoom != null) {
+                    _didPrefillRoomPricing = true;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        setState(() => _applyRoomDefaults(selectedRoom));
+                      }
+                    });
+                  }
                   if (_serviceIds == null && selectedRoom != null) {
                     _serviceIds = selectedRoom.strings('serviceIds').toSet();
                   }
@@ -400,7 +528,13 @@ class _ContractEditPageState extends State<ContractEditPage> {
                       ? null
                       : roomTenants.any((t) => t.id == _tenantId)
                       ? _tenantId
-                      : (roomTenants.length == 1 ? roomTenants.first.id : null);
+                      : (roomTenants.isNotEmpty
+                            ? (roomTenants
+                                      .where((t) => t.text('role') == 'leader')
+                                      .firstOrNull
+                                      ?.id ??
+                                  roomTenants.first.id)
+                            : null);
                   if (validTenantId != _tenantId) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (mounted) setState(() => _tenantId = validTenantId);
@@ -412,13 +546,17 @@ class _ContractEditPageState extends State<ContractEditPage> {
                   if (needsExistingTenant) {
                     _setContact(selectedTenant);
                   }
+                  final isSelectedRoomOccupied =
+                      selectedRoom != null &&
+                      occupiedRoomIds.contains(selectedRoom.id);
 
                   return Form(
                     key: _formKey,
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
                       children: [
-                        if (isEdit)
+                        if (isEdit) ...[
+                          formLabel('Số hợp đồng', required: true),
                           Padding(
                             padding: const EdgeInsets.only(bottom: 14),
                             child: TextFormField(
@@ -429,29 +567,47 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                   ? 'Vui lòng nhập số hợp đồng'
                                   : null,
                             ),
-                          )
-                        else
+                          ),
+                        ] else
                           _readOnlyBox(
-                            'Số hợp đồng',
+                            'Số hợp đồng (tự động)',
                             _suggestedNumber(contracts),
                           ),
+
+                        formLabel('Chọn phòng (chỉ phòng Trống)', required: true),
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
+                          padding: const EdgeInsets.only(bottom: 8),
                           child: DropdownButtonFormField<String>(
                             key: ValueKey('room_${selectedRoom?.id}'),
                             initialValue: selectedRoom?.id,
                             dropdownColor: Colors.white,
+                            isExpanded: true,
                             icon: const Icon(
                               Icons.keyboard_arrow_down_rounded,
                               color: muted,
                             ),
                             style: const TextStyle(color: ink, fontSize: 14),
-                            decoration: _boxDecoration(hint: 'Phòng'),
+                            decoration: _boxDecoration(
+                              hint: 'Chọn phòng trống để lập hợp đồng',
+                            ),
                             items: [
                               for (final r in rooms)
                                 DropdownMenuItem(
                                   value: r.id,
-                                  child: Text(r.name),
+                                  child: Text(
+                                    occupiedRoomIds.contains(r.id)
+                                        ? '${r.name} — Đang thuê (Đã có hợp đồng)'
+                                        : '${r.name} — Trống (${money(r.data['price'])}/tháng)',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: occupiedRoomIds.contains(r.id)
+                                          ? const Color(0xFFDC2626)
+                                          : ink,
+                                      fontWeight: occupiedRoomIds.contains(r.id)
+                                          ? FontWeight.w500
+                                          : FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
                             ],
                             onChanged: (v) {
@@ -466,12 +622,55 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                 _serviceIds = room
                                     ?.strings('serviceIds')
                                     .toSet();
+                                _applyRoomDefaults(room);
                               });
                             },
-                            validator: (v) =>
-                                (v == null || v.isEmpty) ? 'Chọn phòng' : null,
+                            validator: (v) {
+                              if (v == null || v.isEmpty) {
+                                return 'Vui lòng chọn phòng';
+                              }
+                              if (occupiedRoomIds.contains(v)) {
+                                return 'Phòng này đang có hợp đồng hiệu lực. Chỉ phòng Trống mới được lập hợp đồng!';
+                              }
+                              return null;
+                            },
                           ),
                         ),
+                        if (isSelectedRoomOccupied)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 14),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFDECEC),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFDC2626),
+                              ),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Color(0xFFDC2626),
+                                  size: 20,
+                                ),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Phòng này đang có hợp đồng hiệu lực. Hệ thống không cho phép tạo hợp đồng thứ 2 chồng lên phòng đang thuê. Vui lòng chọn phòng Trống!',
+                                    style: TextStyle(
+                                      color: Color(0xFFDC2626),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        else
+                          const SizedBox(height: 6),
+
                         if (!isEdit)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 14),
@@ -499,16 +698,26 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                     _tenantDrafts.add(
                                       _newTenantDraft('leader'),
                                     );
-                                  } else if (!_tenantDrafts.any(
-                                    (tenant) => tenant.role == 'leader',
-                                  )) {
-                                    _tenantDrafts.first.role = 'leader';
+                                  } else {
+                                    for (
+                                      var i = 0;
+                                      i < _tenantDrafts.length;
+                                      i++
+                                    ) {
+                                      _tenantDrafts[i].role = i == 0
+                                          ? 'leader'
+                                          : 'member';
+                                    }
                                   }
                                 });
                               },
                             ),
                           ),
-                        if (isEdit || _useExistingTenant)
+                        if (isEdit || _useExistingTenant) ...[
+                          formLabel(
+                            'Trưởng phòng (Người đại diện đứng tên hợp đồng)',
+                            required: true,
+                          ),
                           Padding(
                             padding: const EdgeInsets.only(bottom: 14),
                             child: DropdownButtonFormField<String>(
@@ -524,16 +733,16 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               style: const TextStyle(color: ink, fontSize: 14),
                               decoration: _boxDecoration(
                                 hint: selectedRoom == null
-                                    ? 'Người thuê (chọn phòng trước)'
+                                    ? 'Chọn phòng trước'
                                     : roomTenants.isEmpty
-                                    ? 'Phòng chưa có người thuê'
-                                    : 'Người đứng hợp đồng',
+                                    ? 'Phòng chưa có người thuê sẵn'
+                                    : 'Chọn duy nhất 1 Trưởng phòng',
                               ),
                               items: [
                                 for (final t in roomTenants)
                                   DropdownMenuItem(
                                     value: t.id,
-                                    child: Text(t.name),
+                                    child: Text('${t.name} (${t.text('phone')})'),
                                   ),
                               ],
                               onChanged: (v) {
@@ -558,18 +767,19 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                 );
                               },
                               validator: (v) => (v == null || v.isEmpty)
-                                  ? 'Chọn người đứng hợp đồng'
+                                  ? 'Vui lòng chọn Trưởng phòng đứng tên hợp đồng'
                                   : null,
                             ),
                           ),
+                        ],
                         if (roomTenants.any((t) => t.id != validTenantId)) ...[
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4, bottom: 4),
+                          const Padding(
+                            padding: EdgeInsets.only(top: 2, bottom: 4),
                             child: Text(
-                              'Người thuê hiện có trong phòng',
-                              style: const TextStyle(
+                              'Thành viên ở ghép trong phòng (tự động là Thành viên)',
+                              style: TextStyle(
                                 color: ink,
-                                fontSize: 14,
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -591,7 +801,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                 ),
                               ),
                               subtitle: const Text(
-                                'Thành viên',
+                                'Thành viên ở ghép',
                                 style: TextStyle(color: muted, fontSize: 11),
                               ),
                               onChanged: (checked) => setState(() {
@@ -608,11 +818,11 @@ class _ContractEditPageState extends State<ContractEditPage> {
                             padding: const EdgeInsets.only(bottom: 8),
                             child: Text(
                               _useExistingTenant
-                                  ? 'Người thuê mới thêm vào sẽ là thành viên'
-                                  : 'Thêm người thuê và chọn vai trò trong phòng',
+                                  ? 'Thêm thành viên ở ghép mới (nếu có)'
+                                  : 'Danh sách người thuê (Chỉ duy nhất 1 Trưởng phòng)',
                               style: const TextStyle(
                                 color: ink,
-                                fontSize: 14,
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -624,8 +834,16 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color:
+                                      (!_useExistingTenant &&
+                                          tenant.role == 'leader')
+                                      ? blue
+                                      : line,
+                                ),
                               ),
                               child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   TextFormField(
                                     controller: tenant.name,
@@ -635,7 +853,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                     ),
                                     decoration:
                                         _boxDecoration(
-                                          hint: 'Họ và tên người thuê',
+                                          hint: 'Họ và tên người thuê *',
                                         ).copyWith(
                                           suffixIcon: _tenantDrafts.length > 1
                                               ? IconButton(
@@ -654,7 +872,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                   const SizedBox(height: 8),
                                   DropdownButtonFormField<String>(
                                     key: ValueKey(
-                                      'role_${tenant.id}_${tenant.role}',
+                                      'role_${tenant.id}_${_useExistingTenant ? 'member' : tenant.role}',
                                     ),
                                     initialValue: _useExistingTenant
                                         ? 'member'
@@ -663,20 +881,20 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                     items: const [
                                       DropdownMenuItem(
                                         value: 'leader',
-                                        child: Text('Trưởng phòng'),
+                                        child: Text(
+                                          'Trưởng phòng (Đại diện hợp đồng)',
+                                        ),
                                       ),
                                       DropdownMenuItem(
                                         value: 'member',
-                                        child: Text('Thành viên'),
+                                        child: Text('Thành viên ở ghép'),
                                       ),
                                     ],
                                     onChanged: _useExistingTenant
                                         ? null
                                         : (role) {
                                             if (role != null) {
-                                              setState(
-                                                () => tenant.role = role,
-                                              );
+                                              _selectDraftRole(tenant, role);
                                             }
                                           },
                                   ),
@@ -695,18 +913,18 @@ class _ContractEditPageState extends State<ContractEditPage> {
                             child: TextButton.icon(
                               onPressed: _addTenantDraft,
                               icon: const Icon(Icons.person_add_alt_1_rounded),
-                              label: const Text('Thêm người thuê'),
+                              label: const Text('Thêm thành viên ở ghép'),
                             ),
                           ),
                         ],
                         if (isEdit || _useExistingTenant) ...[
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
                             child: Text(
-                              'Thông tin người đứng hợp đồng',
-                              style: const TextStyle(
+                              'Thông tin liên hệ Trưởng phòng',
+                              style: TextStyle(
                                 color: ink,
-                                fontSize: 14,
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -715,13 +933,16 @@ class _ContractEditPageState extends State<ContractEditPage> {
                           _contactField('Email', _emailCtrl),
                           _contactField('CCCD/Passport', _identityCtrl),
                         ],
+
+                        const SizedBox(height: 4),
+                        formLabel('Ngày bắt đầu hợp đồng', required: true),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 14),
                           child: TextFormField(
                             controller: _startCtrl,
                             style: const TextStyle(color: ink, fontSize: 14),
                             decoration: _boxDecoration(
-                              hint: 'Ngày bắt đầu (YYYY-MM-DD hoặc dd/mm/yyyy)',
+                              hint: 'YYYY-MM-DD hoặc dd/MM/yyyy',
                               suffix: IconButton(
                                 icon: const Icon(
                                   Icons.calendar_today_outlined,
@@ -732,18 +953,19 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               ),
                             ),
                             validator: (v) => (v == null || v.trim().isEmpty)
-                                ? 'Nhập ngày bắt đầu'
+                                ? 'Vui lòng nhập ngày bắt đầu hợp đồng'
                                 : null,
                           ),
                         ),
+
+                        formLabel('Ngày kết thúc hợp đồng', required: true),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 14),
                           child: TextFormField(
                             controller: _endCtrl,
                             style: const TextStyle(color: ink, fontSize: 14),
                             decoration: _boxDecoration(
-                              hint:
-                                  'Ngày kết thúc (YYYY-MM-DD hoặc dd/mm/yyyy)',
+                              hint: 'YYYY-MM-DD hoặc dd/MM/yyyy',
                               suffix: IconButton(
                                 icon: const Icon(
                                   Icons.calendar_today_outlined,
@@ -754,27 +976,158 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               ),
                             ),
                             validator: (v) => (v == null || v.trim().isEmpty)
-                                ? 'Nhập ngày kết thúc'
+                                ? 'Vui lòng nhập ngày kết thúc hợp đồng'
                                 : null,
                           ),
                         ),
-                        _readOnlyBox(
-                          'Tiền phòng (đ/tháng)',
-                          selectedRoom != null
-                              ? money(selectedRoom.data['price'])
-                              : 'Tự động lấy từ phòng',
-                        ),
-                        _readOnlyBox(
-                          'Tiền đặt cọc (đ)',
-                          selectedRoom != null
-                              ? money(selectedRoom.data['deposit'])
-                              : 'Tự động lấy từ phòng',
-                        ),
+
+                        formLabel('Tiền phòng (đ/tháng)', required: true),
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: TextFormField(
+                            controller: _rentCtrl,
+                            keyboardType: TextInputType.number,
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            decoration: _boxDecoration(
+                              hint: 'Nhập giá tiền phòng hàng tháng (VD: 3500000)',
+                            ),
+                            validator: (v) {
+                              final n = num.tryParse(
+                                (v ?? '')
+                                    .trim()
+                                    .replaceAll('.', '')
+                                    .replaceAll(',', ''),
+                              );
+                              if (n == null || n <= 0) {
+                                return 'Vui lòng nhập tiền phòng hợp lệ';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+
+                        formLabel('Tiền đặt cọc (đ)', required: true),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: TextFormField(
+                            controller: _depositCtrl,
+                            keyboardType: TextInputType.number,
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            decoration: _boxDecoration(
+                              hint: 'Nhập số tiền đặt cọc (VD: 3500000)',
+                            ),
+                            validator: (v) {
+                              final n = num.tryParse(
+                                (v ?? '')
+                                    .trim()
+                                    .replaceAll('.', '')
+                                    .replaceAll(',', ''),
+                              );
+                              if (n == null || n < 0) {
+                                return 'Vui lòng nhập tiền cọc hợp lệ';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  formLabel(
+                                    'Chỉ số điện ban đầu (lúc làm hợp đồng)',
+                                    required: true,
+                                  ),
+                                  TextFormField(
+                                    controller: _initialElectricCtrl,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    decoration: _boxDecoration(
+                                      hint: 'VD: 120 (kWh)',
+                                    ),
+                                    validator: (v) {
+                                      final n = num.tryParse(
+                                        (v ?? '').trim().replaceAll(',', '.'),
+                                      );
+                                      if (n == null || n < 0) {
+                                        return 'Nhập chỉ số điện >= 0';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  formLabel(
+                                    'Chỉ số nước ban đầu (lúc làm hợp đồng)',
+                                    required: true,
+                                  ),
+                                  TextFormField(
+                                    controller: _initialWaterCtrl,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    decoration: _boxDecoration(
+                                      hint: 'VD: 35 (m³)',
+                                    ),
+                                    validator: (v) {
+                                      final n = num.tryParse(
+                                        (v ?? '').trim().replaceAll(',', '.'),
+                                      );
+                                      if (n == null || n < 0) {
+                                        return 'Nhập chỉ số nước >= 0';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 6, bottom: 14),
+                          child: Text(
+                            'Chỉ số điện & nước ban đầu sẽ được lưu vào hợp đồng và phòng để làm mốc chỉ số cũ khi tính hóa đơn tháng đầu tiên.',
+                            style: TextStyle(color: muted, fontSize: 11.5),
+                          ),
+                        ),
+
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 8),
                           child: Text(
                             'Dịch vụ áp dụng',
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: ink,
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
@@ -782,14 +1135,11 @@ class _ContractEditPageState extends State<ContractEditPage> {
                           ),
                         ),
                         if (services.where((s) => !s.archived).isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 14),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 14),
                             child: Text(
                               'Chưa có dịch vụ nào để chọn',
-                              style: const TextStyle(
-                                color: muted,
-                                fontSize: 12,
-                              ),
+                              style: TextStyle(color: muted, fontSize: 12),
                             ),
                           ),
                         for (final service
@@ -834,24 +1184,28 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               }),
                             ),
                           ),
+                        const SizedBox(height: 8),
+                        formLabel('Ghi chú hợp đồng'),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 22),
                           child: TextFormField(
                             controller: _noteCtrl,
-                            maxLines: 4,
+                            maxLines: 3,
                             style: const TextStyle(color: ink, fontSize: 14),
-                            decoration: _boxDecoration(hint: 'Ghi chú'),
+                            decoration: _boxDecoration(hint: 'Ghi chú điều khoản...'),
                           ),
                         ),
                         SizedBox(
-                          height: 48,
+                          height: 50,
                           child: FilledButton(
-                            onPressed: _saving ? null : _save,
+                            onPressed: _saving
+                                ? null
+                                : () => _save(occupiedRoomIds),
                             style: FilledButton.styleFrom(
                               backgroundColor: blue,
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                               textStyle: const TextStyle(
                                 fontSize: 14.5,
@@ -867,7 +1221,11 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                       color: Colors.white,
                                     ),
                                   )
-                                : const Text('Lưu hợp đồng'),
+                                : Text(
+                                    isEdit
+                                        ? 'Lưu thay đổi hợp đồng'
+                                        : 'Lưu hợp đồng',
+                                  ),
                           ),
                         ),
                       ],

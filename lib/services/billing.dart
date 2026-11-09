@@ -17,8 +17,9 @@ class Billing {
 
   static String period(dynamic v) {
     final s = '$v';
-    if (!RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(s))
+    if (!RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(s)) {
       throw StateError('Kỳ phải là YYYY-MM');
+    }
     return s;
   }
 
@@ -93,10 +94,12 @@ class Billing {
       },
     ];
     for (final s in services) {
-      if (s['archived'] == true)
+      if (s['archived'] == true) {
         throw StateError('Dịch vụ ${s['name']} đã lưu trữ');
+      }
       final price = number(s['price'], 'Đơn giá');
       num quantity;
+      String? usedMeterPeriod;
       switch (s['mode']) {
         case 'room':
           quantity = 1;
@@ -106,8 +109,12 @@ class Billing {
           break;
         case 'meter':
           final m = meters[s['_id']];
-          if (m == null || m['period'] != mp)
-            throw StateError('Thiếu chỉ số ${s['name']} kỳ $mp');
+          if (m == null || (m['period'] != mp && m['period'] != p)) {
+            throw StateError(
+              'Thiếu chỉ số ${s['name']} (hãy nhập chỉ số kỳ $p hoặc $mp tại mục Dịch vụ > Nhập chỉ số)',
+            );
+          }
+          usedMeterPeriod = '${m['period']}';
           final old = number(m['previous'], 'Chỉ số cũ', integer: false),
               current = number(m['current'], 'Chỉ số mới', integer: false);
           if (current < old) throw StateError('Chỉ số mới nhỏ hơn chỉ số cũ');
@@ -124,7 +131,7 @@ class Billing {
         'unitPrice': price,
         'amount': (quantity * price).round(),
         'type': 'service',
-        'meterPeriod': s['mode'] == 'meter' ? mp : null,
+        'meterPeriod': s['mode'] == 'meter' ? (usedMeterPeriod ?? mp) : null,
       });
     }
     for (final x in extras) {
@@ -152,6 +159,10 @@ class Billing {
       'contractNumber': contract['number'],
       'tenantId': contract['tenantId'],
       'tenantName': contract['tenantName'],
+      'tenantPhone': contract['tenantPhone'] ?? '',
+      'tenantEmail': contract['tenantEmail'] ?? '',
+      'tenantIdentity': contract['tenantIdentity'] ?? '',
+      'deposit': contract['deposit'] ?? room['deposit'] ?? 0,
       'recipientUid': contract['recipientUid'] ?? '',
       'issueDate': day,
       'dueDate': iso(

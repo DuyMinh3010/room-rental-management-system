@@ -41,7 +41,7 @@ class _RegisterPageState extends State<RegisterPage> {
     try {
       final credential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
-            email: contact.text.trim(),
+            email: contact.text.trim().toLowerCase(),
             password: password.text,
           );
       final user = credential.user;
@@ -49,6 +49,7 @@ class _RegisterPageState extends State<RegisterPage> {
         throw StateError('Firebase không trả về tài khoản vừa tạo');
       }
       await user.updateDisplayName(name.text.trim());
+      await user.sendEmailVerification();
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;

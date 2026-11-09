@@ -30,6 +30,21 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
+  Future<void> _deleteRoom(BuildContext context, Record r) async {
+    if (!await confirm(
+      context,
+      'Xóa / lưu trữ phòng ${r.name}? Lịch sử hóa đơn vẫn được giữ.',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await perform(
+      context,
+      () => store.command('archiveRoom', id: r.id),
+      'Đã xóa phòng ${r.name}',
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: canvas,
@@ -54,7 +69,7 @@ class _RoomPageState extends State<RoomPage> {
       collection: 'rooms',
       builder: (_, all) {
         final rooms = all.where((r) => !r.archived).toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
+          ..sort((a, b) => naturalCompare(a.name, b.name));
         return RecordsView(
           collection: 'contracts',
           builder: (_, contracts) {
@@ -65,9 +80,9 @@ class _RoomPageState extends State<RoomPage> {
                 .substring(0, 10);
             bool rented(Record room) => contracts.any(
               (c) =>
+                  !c.archived &&
                   c.text('roomId') == room.id &&
-                  c.text('status') == 'active' &&
-                  c.text('startDate').compareTo(day) <= 0 &&
+                  ['active', 'scheduled'].contains(c.text('status')) &&
                   c.text('endDate').compareTo(day) >= 0,
             );
             final shown = rooms
@@ -154,7 +169,7 @@ class _RoomPageState extends State<RoomPage> {
                             onTap: () =>
                                 openPage(context, RoomDetailPage(roomId: r.id)),
                             child: Padding(
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.fromLTRB(12, 12, 6, 12),
                               child: Row(
                                 children: [
                                   Container(
@@ -226,10 +241,12 @@ class _RoomPageState extends State<RoomPage> {
                                       ],
                                     ),
                                   ),
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: muted,
-                                    size: 22,
+                                  moreActionsMenu(
+                                    onEdit: () => openPage(
+                                      context,
+                                      RoomEditPage(room: r),
+                                    ),
+                                    onDelete: () => _deleteRoom(context, r),
                                   ),
                                 ],
                               ),

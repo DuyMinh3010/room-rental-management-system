@@ -186,20 +186,10 @@ class _ServicePageState extends State<ServicePage> {
                               ),
                             ),
                             const SizedBox(width: 2),
-                            IconButton(
-                              tooltip: 'Xóa dịch vụ',
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 28,
-                                minHeight: 28,
-                              ),
-                              icon: const Icon(
-                                Icons.delete_outline_rounded,
-                                color: muted,
-                                size: 17,
-                              ),
-                              onPressed: () async {
+                            moreActionsMenu(
+                              onEdit: () =>
+                                  openPage(context, ServiceEditPage(service: s)),
+                              onDelete: () async {
                                 if (await confirm(
                                       context,
                                       'Xóa dịch vụ ${s.name}? Dịch vụ phải được bỏ khỏi các phòng trước.',
@@ -215,11 +205,6 @@ class _ServicePageState extends State<ServicePage> {
                                   );
                                 }
                               },
-                            ),
-                            const Icon(
-                              Icons.chevron_right_rounded,
-                              color: muted,
-                              size: 20,
                             ),
                           ],
                         ),
@@ -654,8 +639,10 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
           )
           .firstOrNull;
       final prev = _latestMeterBefore(meters, s.id, _period);
-      final prevVal = (saved?.data['previous'] ?? prev?.data['current'] ?? '')
-          .toString();
+      final initReading = _initialRoomReadingForService(widget.room, s);
+      final prevVal =
+          (saved?.data['previous'] ?? prev?.data['current'] ?? initReading ?? '')
+              .toString();
       final currVal = saved?.data['current']?.toString() ?? '';
       _prevCtrls.putIfAbsent(s.id, () => TextEditingController()).text =
           prevVal;
@@ -1781,6 +1768,17 @@ class _MeterRoomFormState extends State<MeterRoomForm> {
   }
 }
 
+num? _initialRoomReadingForService(Record room, Record service) {
+  final sName = service.name.toLowerCase();
+  if (sName.contains('điện') || sName.contains('dien')) {
+    return room.number('initialElectric');
+  }
+  if (sName.contains('nước') || sName.contains('nuoc')) {
+    return room.number('initialWater');
+  }
+  return null;
+}
+
 class MeterInputPage extends StatelessWidget {
   final Record room, service;
   final Record? meter, previous;
@@ -1801,7 +1799,11 @@ class MeterInputPage extends StatelessWidget {
     action: 'saveMeter',
     submitLabel: 'Lưu chỉ số',
     initial: {
-      'previous': previous?.data['current'] ?? meter?.data['previous'] ?? '',
+      'previous':
+          previous?.data['current'] ??
+          meter?.data['previous'] ??
+          _initialRoomReadingForService(room, service) ??
+          '',
       'current': meter?.data['current'] ?? '',
     },
     fixed: {'roomId': room.id, 'serviceId': service.id, 'period': period},
