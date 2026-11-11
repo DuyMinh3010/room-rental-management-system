@@ -277,6 +277,24 @@ class SparkCommands {
                 'roomId': '',
                 'updatedAt': stamp(),
               });
+              // [BE] Đảm bảo trong phòng có 1 trưởng phòng: nếu người này là leader, chuyển người ở lại thành leader
+              if (oldRoom.isNotEmpty && old?['role'] == 'leader') {
+                final remainingTenants = await list(
+                  'tenants',
+                  field: 'roomId',
+                  equals: oldRoom,
+                );
+                final activeRemaining = remainingTenants
+                    .where((t) => t['_id'] != k && t['archived'] != true)
+                    .toList();
+                if (activeRemaining.isNotEmpty &&
+                    !activeRemaining.any((t) => t['role'] == 'leader')) {
+                  tx.update(
+                    ref('tenants', activeRemaining.first['_id'] as String),
+                    {'role': 'leader', 'updatedAt': stamp()},
+                  );
+                }
+              }
             } else {
               final name = text(d['name'], 'họ tên');
               final phone = text(d['phone'], 'số điện thoại');
@@ -296,6 +314,7 @@ class SparkCommands {
                   ? largeText(d['cccdBackUrl'])
                   : largeText(old?['cccdBackUrl'] ?? '');
 
+              // [BE] Đảm bảo trong phòng chỉ có duy nhất 1 Trưởng phòng:
               // Nếu chọn người này làm Trưởng phòng, chuyển các thành viên khác trong phòng thành member
               if (roomId.isNotEmpty && role == 'leader') {
                 for (final other in activeOthers) {
@@ -306,6 +325,16 @@ class SparkCommands {
                     });
                   }
                 }
+              } else if (roomId.isNotEmpty && role == 'member' && activeOthers.isNotEmpty) {
+                // Nếu người này là member và phòng chưa có leader nào khác, gán người còn lại làm leader
+                if (!activeOthers.any((other) => other['role'] == 'leader')) {
+                  tx.update(
+                    ref('tenants', activeOthers.first['_id'] as String),
+                    {'role': 'leader', 'updatedAt': stamp()},
+                  );
+                }
+              } else if (roomId.isNotEmpty && activeOthers.isEmpty) {
+                role = 'leader';
               }
 
               tx.set(ref('tenants', k), {

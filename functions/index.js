@@ -255,7 +255,46 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             roomId: "",
             updatedAt: stamp(),
           });
-        } else
+          // Nếu người này là leader và phòng cũ còn người khác, chuyển 1 người còn lại thành leader (đảm bảo trong phòng có 1 trưởng phòng)
+          if (oldRoomId && old?.role === "leader") {
+            const oldRoomTenants = await tx.get(
+              ownerQuery("tenants", ownerId, "roomId", oldRoomId),
+            );
+            const remaining = oldRoomTenants.docs.filter(
+              (x) => x.id !== key && !x.data().archived,
+            );
+            if (
+              remaining.length > 0 &&
+              !remaining.some((x) => x.data().role === "leader")
+            ) {
+              tx.update(remaining[0].ref, {
+                role: "leader",
+                updatedAt: stamp(),
+              });
+            }
+          }
+        } else {
+          const activeOthers = (others?.docs || []).filter(
+            (x) => x.id !== key && !x.data().archived,
+          );
+          let role = d.role || old?.role;
+          if (role !== "leader" && role !== "member") {
+            role = activeOthers.length === 0 ? "leader" : "member";
+          }
+          // [BE] Đảm bảo trong phòng chỉ có duy nhất 1 trưởng phòng
+          if (roomId && role === "leader") {
+            for (const otherDoc of activeOthers) {
+              if (otherDoc.data().role === "leader") {
+                tx.update(otherDoc.ref, { role: "member", updatedAt: stamp() });
+              }
+            }
+          } else if (roomId && role === "member" && activeOthers.length > 0) {
+            if (!activeOthers.some((x) => x.data().role === "leader")) {
+              role = "leader";
+            }
+          } else if (roomId && activeOthers.length === 0) {
+            role = "leader";
+          }
           tx.set(
             r,
             {
@@ -268,6 +307,13 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
               address: text(d.address, "địa chỉ", true),
               note: text(d.note, "ghi chú", true),
               roomId,
+              role,
+              cccdFrontUrl: d.cccdFrontUrl
+                ? String(d.cccdFrontUrl)
+                : old?.cccdFrontUrl || "",
+              cccdBackUrl: d.cccdBackUrl
+                ? String(d.cccdBackUrl)
+                : old?.cccdBackUrl || "",
               archived: false,
               authUid: old?.authUid || "",
               createdAt: old?.createdAt || stamp(),
@@ -275,6 +321,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             },
             { merge: true },
           );
+        }
         if (nextRoom)
           tx.update(ref("rooms", roomId), {
             people: nextCount,
@@ -484,6 +531,15 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
           );
         const status = startDate > B.today() ? "scheduled" : "active";
         tx.set(lock, { ownerId, contractId: key });
+        const rentVal = num(
+          d.rent !== undefined ? d.rent : room.price,
+          "giá thuê phòng",
+          1,
+        );
+        const depositVal = num(
+          d.deposit !== undefined ? d.deposit : (room.deposit || 0),
+          "tiền cọc phòng",
+        );
         tx.set(
           r,
           {
@@ -496,8 +552,8 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
             recipientUid: tenant.authUid || "",
             startDate,
             endDate,
-            rent: num(room.price, "giá thuê phòng", 1),
-            deposit: num(room.deposit, "tiền cọc phòng"),
+            rent: rentVal,
+            deposit: depositVal,
             status,
             note: text(d.note, "ghi chú", true),
             createdAt: old?.createdAt || stamp(),
