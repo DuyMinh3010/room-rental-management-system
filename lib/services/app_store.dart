@@ -280,6 +280,7 @@ class AppStore {
     return switch (action) {
       'lookup' => _lookupTenantByEmail(user),
       'createMaintenance' => _createTenantMaintenance(user, data),
+      'cancelMaintenance' => _cancelTenantMaintenance(user, data),
       'load' => _loadTenantPortal(user),
       _ => throw StateError('Thao tác người thuê không hợp lệ.'),
     };
@@ -394,16 +395,12 @@ class AppStore {
       _tenantContracts(ownerId, roomId, tenantId),
       _tenantMeters(ownerId, roomId, serviceIds),
       _tenantMaintenance(ownerId, roomId, tenantId),
-      db
-          .collection('invoices')
-          .where('ownerId', isEqualTo: ownerId)
-          .where('recipientUid', isEqualTo: user.uid)
-          .get(),
+      _tenantInvoices(ownerId, roomId, user.uid),
     ]);
-    final contracts = results[0] as List<Map<String, dynamic>>;
-    final meters = results[1] as List<Map<String, dynamic>>;
-    final maintenance = results[2] as List<Map<String, dynamic>>;
-    final invoiceSnapshot = results[3] as QuerySnapshot<Map<String, dynamic>>;
+    final contracts = results[0];
+    final meters = results[1];
+    final maintenance = results[2];
+    final invoices = results[3];
     return {
       'tenant': {
         'id': tenantId,
@@ -494,21 +491,23 @@ class AppStore {
             ]),
           )
           .toList(),
-      'invoices': invoiceSnapshot.docs
+      'invoices': invoices
+          .where((doc) => doc['archived'] != true)
           .map(
-            (doc) => _projectTenantRecord(
-              {'id': doc.id, ...doc.data()},
-              [
-                'id',
-                'roomName',
-                'period',
-                'dueDate',
-                'issueDate',
-                'total',
-                'status',
-                'code',
-              ],
-            ),
+            (doc) => _projectTenantRecord(doc, [
+              'id',
+              'roomName',
+              'period',
+              'dueDate',
+              'issueDate',
+              'total',
+              'status',
+              'code',
+              'paidDateTime',
+              'method',
+              'paymentNote',
+              'invoiceNote',
+            ]),
           )
           .toList(),
     };
@@ -593,6 +592,45 @@ class AppStore {
         for (final document in snapshot.docs)
           {'id': document.id, ...document.data()},
     ];
+  }
+
+  Future<List<Map<String, dynamic>>> _tenantInvoices(
+    String ownerId,
+    String roomId,
+    String userUid,
+  ) async {
+    Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> safeQuery(
+      Query<Map<String, dynamic>> query,
+    ) async {
+      try {
+        return (await query.get()).docs;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') return const [];
+        rethrow;
+      }
+    }
+
+    final results = await Future.wait([
+      safeQuery(
+        db
+            .collection('invoices')
+            .where('ownerId', isEqualTo: ownerId)
+            .where('roomId', isEqualTo: roomId),
+      ),
+      safeQuery(
+        db
+            .collection('invoices')
+            .where('ownerId', isEqualTo: ownerId)
+            .where('recipientUid', isEqualTo: userUid),
+      ),
+    ]);
+    final byId = <String, Map<String, dynamic>>{};
+    for (final docs in results) {
+      for (final doc in docs) {
+        byId[doc.id] = {'id': doc.id, ...doc.data()};
+      }
+    }
+    return byId.values.toList();
   }
 
   Future<List<Map<String, dynamic>>> _tenantMaintenance(
@@ -708,7 +746,55 @@ class AppStore {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      final noticeRef = db
+          .collection('notifications')
+          .doc('maint_new_${requestRef.id}');
+      transaction.set(noticeRef, {
+        'ownerId': ownerId,
+        'title': 'Yêu cầu bảo trì mới',
+        'body':
+            '${room['name'] ?? 'Phòng'} (${tenant['name'] ?? 'Người thuê'}) · $title ($priority)',
+        'audience': 'managers',
+        'roomId': roomId,
+        'maintenanceId': requestRef.id,
+        'createdAt': FieldValue.serverTimestamp(),
+        'delivery': 'in_app',
+      });
       return requestRef.id;
+    });
+    return {'id': requestId};
+  }
+
+  Future<Map<String, dynamic>> _cancelTenantMaintenance(
+    User user,
+    Map<String, dynamic> data,
+  ) async {
+    final requestId = _tenantText(data['id'], 'mã yêu cầu bảo trì', max: 200);
+    if (requestId.contains('/')) {
+      throw StateError('Mã yêu cầu bảo trì không hợp lệ.');
+    }
+    final userRef = db.collection('users').doc(user.uid);
+    final reqRef = db.collection('maintenance').doc(requestId);
+    await db.runTransaction((transaction) async {
+      final userSnap = await transaction.get(userRef);
+      final reqSnap = await transaction.get(reqRef);
+      final mapping = userSnap.data();
+      final req = reqSnap.data();
+      if (mapping == null || !reqSnap.exists || req == null) {
+        throw StateError('Không tìm thấy yêu cầu bảo trì.');
+      }
+      if (req['ownerId'] != mapping['ownerId'] ||
+          req['roomId'] != mapping['roomId'] ||
+          req['tenantId'] != mapping['tenantId']) {
+        throw StateError('Bạn không có quyền hủy yêu cầu này.');
+      }
+      if (req['status'] != 'new') {
+        throw StateError('Chỉ có thể hủy yêu cầu đang ở trạng thái Mới.');
+      }
+      transaction.update(reqRef, {
+        'status': 'cancelled',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
     return {'id': requestId};
   }

@@ -54,7 +54,8 @@ class DocumentService {
             pw.Text('Tiền cọc: ${money(d['deposit'])}'),
             if (d['initialElectric'] != null || d['initialWater'] != null)
               pw.Text(
-                'Chỉ số ban đầu lúc làm hợp đồng: Điện ${d['initialElectric'] ?? 0} kWh · Nước ${d['initialWater'] ?? 0} m³',
+                'Chỉ số ban đầu lúc làm hợp đồng: '
+                '${[if (d['initialElectric'] != null) 'Điện ${d['initialElectric']} kWh', if (d['initialWater'] != null) 'Nước ${d['initialWater']} m³'].join(' · ')}',
               ),
             pw.SizedBox(height: 16),
             pw.Text('Điều khoản / ghi chú: ${record.text('note')}'),

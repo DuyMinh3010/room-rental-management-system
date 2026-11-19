@@ -133,15 +133,45 @@ class ContractDetailPage extends StatelessWidget {
             final room = rooms
                 .where((r) => r.id == c.text('roomId'))
                 .firstOrNull;
-            final assignedServices = room == null
-                ? const <Record>[]
-                : services
-                      .where(
-                        (s) =>
-                            !s.archived &&
-                            room.strings('serviceIds').contains(s.id),
-                      )
-                      .toList();
+            final assignedServices = () {
+              final contractSids = c.strings('serviceIds').toSet();
+              final roomSids = room?.strings('serviceIds').toSet() ?? const <String>{};
+              final sids = contractSids.isNotEmpty ? contractSids : roomSids;
+              return services
+                  .where((s) => !s.archived && sids.contains(s.id))
+                  .toList()
+                ..sort((a, b) => a.name.compareTo(b.name));
+            }();
+            final meterServices = assignedServices
+                .where((s) => s.text('mode') == 'meter')
+                .toList();
+            final cInitialMeters = c.data['initialMeters'] is Map
+                ? Map<String, dynamic>.from(c.data['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final rInitialMeters = room?.data['initialMeters'] is Map
+                ? Map<String, dynamic>.from(room!.data['initialMeters'] as Map)
+                : const <String, dynamic>{};
+
+            num initialMeterValue(Record s) {
+              if (cInitialMeters[s.id] is num) {
+                return cInitialMeters[s.id] as num;
+              }
+              if (rInitialMeters[s.id] is num) {
+                return rInitialMeters[s.id] as num;
+              }
+              final lower = s.name.toLowerCase();
+              if (lower.contains('điện') || lower.contains('dien')) {
+                return c.number('initialElectric') ??
+                    room?.number('initialElectric') ??
+                    0;
+              }
+              if (lower.contains('nước') || lower.contains('nuoc')) {
+                return c.number('initialWater') ??
+                    room?.number('initialWater') ??
+                    0;
+              }
+              return 0;
+            }
 
             final status = c.text('status');
             final canEnd = ['active', 'scheduled'].contains(status);
@@ -158,12 +188,6 @@ class ContractDetailPage extends StatelessWidget {
               c.text('startDate', c.text('start')),
             );
             final endText = _formatDateVi(c.text('endDate', c.text('end')));
-            final initElectric =
-                c.number('initialElectric') ??
-                room?.number('initialElectric') ??
-                0;
-            final initWater =
-                c.number('initialWater') ?? room?.number('initialWater') ?? 0;
 
             return Scaffold(
               backgroundColor: canvas,
@@ -550,14 +574,11 @@ class ContractDetailPage extends StatelessWidget {
                             'Diện tích / Sức chứa',
                             '${room.number('area') ?? '—'} m² • Tối đa ${room.number('capacity') ?? '—'} người',
                           ),
-                        _priceLine(
-                          'Chỉ số điện ban đầu (lúc làm HĐ)',
-                          '$initElectric kWh',
-                        ),
-                        _priceLine(
-                          'Chỉ số nước ban đầu (lúc làm HĐ)',
-                          '$initWater m³',
-                        ),
+                        for (final svc in meterServices)
+                          _priceLine(
+                            'Chỉ số ${svc.name} ban đầu (lúc làm HĐ)',
+                            '${initialMeterValue(svc)} ${svc.text('unit')}',
+                          ),
                       ],
                     ),
                   ),

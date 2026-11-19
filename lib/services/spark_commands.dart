@@ -198,6 +198,8 @@ class SparkCommands {
                 'initialElectric': old!['initialElectric'],
               if (old?['initialWater'] != null)
                 'initialWater': old!['initialWater'],
+              if (old?['initialMeters'] is Map)
+                'initialMeters': old!['initialMeters'],
               'createdAt': old?['createdAt'] ?? stamp(),
               'updatedAt': stamp(),
             }, SetOptions(merge: true));
@@ -499,13 +501,18 @@ class SparkCommands {
             )) {
               throw StateError('Kỳ này đã phát hành hóa đơn, không sửa chỉ số');
             }
+            final roomInitialMeters = room['initialMeters'] is Map
+                ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+                : const <String, dynamic>{};
             final sNameLower = '${service['name'] ?? ''}'.toLowerCase();
             final fallbackInitial =
-                sNameLower.contains('điện') || sNameLower.contains('dien')
-                ? room['initialElectric']
-                : (sNameLower.contains('nước') || sNameLower.contains('nuoc')
-                      ? room['initialWater']
-                      : 0);
+                roomInitialMeters[sid] ??
+                (sNameLower.contains('điện') || sNameLower.contains('dien')
+                    ? room['initialElectric']
+                    : (sNameLower.contains('nước') ||
+                              sNameLower.contains('nuoc')
+                          ? room['initialWater']
+                          : 0));
             final previous = Billing.number(
                   prev?['current'] ?? d['previous'] ?? fallbackInitial ?? 0,
                   'Chỉ số cũ',
@@ -752,8 +759,11 @@ class SparkCommands {
             if (serviceIds.length > 30) {
               throw StateError('Tối đa 30 dịch vụ/phòng');
             }
+            final loadedServices = <Data>[];
             for (final serviceId in serviceIds) {
-              owned(await read(tx, 'services', serviceId), 'Dịch vụ');
+              loadedServices.add(
+                owned(await read(tx, 'services', serviceId), 'Dịch vụ'),
+              );
             }
             final rentVal = Billing.number(
               d['rent'] ?? old?['rent'] ?? room['price'],
@@ -764,22 +774,49 @@ class SparkCommands {
               d['deposit'] ?? old?['deposit'] ?? room['deposit'] ?? 0,
               'Tiền cọc',
             );
-            final initialElectric = Billing.number(
-              d['initialElectric'] ??
-                  old?['initialElectric'] ??
-                  room['initialElectric'] ??
-                  0,
-              'Chỉ số điện ban đầu',
-              integer: false,
-            );
-            final initialWater = Billing.number(
-              d['initialWater'] ??
-                  old?['initialWater'] ??
-                  room['initialWater'] ??
-                  0,
-              'Chỉ số nước ban đầu',
-              integer: false,
-            );
+            final rawInitialMeters = d['initialMeters'] is Map
+                ? Map<String, dynamic>.from(d['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final oldInitialMeters = old?['initialMeters'] is Map
+                ? Map<String, dynamic>.from(old!['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final roomInitialMeters = room['initialMeters'] is Map
+                ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final initialMeters = <String, num>{};
+            num? initialElectric;
+            num? initialWater;
+            for (final svc in loadedServices) {
+              if (svc['mode'] != 'meter') continue;
+              final sid = svc['_id'] as String;
+              final sNameLower = '${svc['name'] ?? ''}'.toLowerCase();
+              final isElectric =
+                  sNameLower.contains('điện') || sNameLower.contains('dien');
+              final isWater =
+                  sNameLower.contains('nước') || sNameLower.contains('nuoc');
+              final rawVal =
+                  rawInitialMeters[sid] ??
+                  (isElectric ? d['initialElectric'] : null) ??
+                  (isWater ? d['initialWater'] : null) ??
+                  oldInitialMeters[sid] ??
+                  (isElectric ? (old?['initialElectric']) : null) ??
+                  (isWater ? (old?['initialWater']) : null) ??
+                  roomInitialMeters[sid] ??
+                  (isElectric ? room['initialElectric'] : null) ??
+                  (isWater ? room['initialWater'] : null) ??
+                  0;
+              final val = Billing.number(
+                rawVal,
+                'Chỉ số ${svc['name']} ban đầu',
+                integer: false,
+              );
+              initialMeters[sid] = val;
+              if (isElectric && initialElectric == null) {
+                initialElectric = val;
+              } else if (isWater && initialWater == null) {
+                initialWater = val;
+              }
+            }
 
             final tenantName = tenant['name'] as String;
             final tenantContact =
@@ -847,8 +884,9 @@ class SparkCommands {
               'people': occupiedCount + createdTenants.length,
               'serviceIds': serviceIds,
               'contractIds': roomContractIds.toList(),
-              'initialElectric': initialElectric,
-              'initialWater': initialWater,
+              'initialMeters': initialMeters,
+              'initialElectric': initialElectric ?? FieldValue.delete(),
+              'initialWater': initialWater ?? FieldValue.delete(),
               'updatedAt': stamp(),
             });
             if (previousRoom != null) {
@@ -877,8 +915,9 @@ class SparkCommands {
               'endDate': end,
               'rent': rentVal,
               'deposit': depositVal,
-              'initialElectric': initialElectric,
-              'initialWater': initialWater,
+              'initialMeters': initialMeters,
+              'initialElectric': initialElectric ?? FieldValue.delete(),
+              'initialWater': initialWater ?? FieldValue.delete(),
               'status': start.compareTo(now) > 0 ? 'scheduled' : 'active',
               'note': text(d['note'], 'ghi chú', optional: true),
               'archived': false,
@@ -967,16 +1006,30 @@ class SparkCommands {
             final old = isNew ? null : await read(tx, 'maintenance', k),
                 roomId = id(d['roomId']);
             if (old != null) owned(old, 'Yêu cầu sửa chữa');
-            owned(await read(tx, 'rooms', roomId), 'Phòng');
+            final room = owned(await read(tx, 'rooms', roomId), 'Phòng');
             final status = d['status'] ?? 'new';
             if (!['new', 'working', 'done', 'cancelled'].contains(status)) {
               throw StateError('Trạng thái không hợp lệ');
             }
+            final title = text(d['title'], 'vấn đề');
+            final issueType = text(
+              d['issueType'] ?? old?['issueType'] ?? 'Thiết bị',
+              'loại sự cố',
+              optional: true,
+            );
+            final priority = text(
+              d['priority'] ?? old?['priority'] ?? 'Trung bình',
+              'mức độ ưu tiên',
+              optional: true,
+            );
             tx.set(ref('maintenance', k), {
               'ownerId': uid,
               'roomId': roomId,
-              'title': text(d['title'], 'vấn đề'),
+              'roomName': room['name'] ?? old?['roomName'] ?? '',
+              'title': title,
               'description': text(d['description'], 'mô tả'),
+              'issueType': issueType.isEmpty ? 'Thiết bị' : issueType,
+              'priority': priority.isEmpty ? 'Trung bình' : priority,
               'cost': Billing.number(d['cost'] ?? 0, 'Chi phí'),
               'status': status,
               'imageUrls': old?['imageUrls'] ?? [],
@@ -984,6 +1037,24 @@ class SparkCommands {
               'createdAt': old?['createdAt'] ?? stamp(),
               'updatedAt': stamp(),
             }, SetOptions(merge: true));
+            final requesterUid = '${old?['requesterUid'] ?? ''}'.trim();
+            if (old != null &&
+                requesterUid.isNotEmpty &&
+                old['status'] != status) {
+              final statusVi = switch (status) {
+                'working' => 'Đang xử lý',
+                'done' => 'Hoàn thành',
+                'cancelled' => 'Đã hủy',
+                _ => 'Mới tiếp nhận',
+              };
+              notice(
+                tx,
+                'maint_${k}_$status',
+                'Cập nhật yêu cầu bảo trì',
+                '${room['name'] ?? ''} · $title: $statusVi',
+                recipient: requesterUid,
+              );
+            }
           } else if (action == 'deleteMaintenance' ||
               action == 'archiveMaintenance') {
             owned(await read(tx, 'maintenance', k), 'Yêu cầu sửa chữa');
@@ -1216,16 +1287,26 @@ class SparkCommands {
         if (meter != null) owned(meter, 'Chỉ số');
         if (meter == null) {
           // Tự động tìm baseline từ hợp đồng / phòng để khởi tạo mốc chỉ số
+          final cInitialMeters = c['initialMeters'] is Map
+              ? Map<String, dynamic>.from(c['initialMeters'] as Map)
+              : const <String, dynamic>{};
+          final rInitialMeters = room['initialMeters'] is Map
+              ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+              : const <String, dynamic>{};
           final sNameLower = '${s['name'] ?? ''}'.toLowerCase();
           final isElectric =
               sNameLower.contains('điện') || sNameLower.contains('dien');
           final isWater =
               sNameLower.contains('nước') || sNameLower.contains('nuoc');
-          final baseline = (isElectric
-                  ? (c['initialElectric'] ?? room['initialElectric'])
-                  : isWater
-                      ? (c['initialWater'] ?? room['initialWater'])
-                      : 0) as num? ??
+          final baseline =
+              (cInitialMeters[sid] ??
+                      rInitialMeters[sid] ??
+                      (isElectric
+                          ? (c['initialElectric'] ?? room['initialElectric'])
+                          : isWater
+                          ? (c['initialWater'] ?? room['initialWater'])
+                          : 0))
+                  as num? ??
               0;
           meter = {
             'ownerId': uid,
@@ -1315,7 +1396,13 @@ class SparkCommands {
   Future<void> reportPayment(String key, String note) =>
       db.runTransaction((tx) async {
         final b = found(await read(tx, 'invoices', id(key)), 'Hóa đơn');
-        if (b['recipientUid'] != uid || b['status'] != 'unpaid') {
+        final userMap = await read(tx, 'users', uid);
+        final isRecipient = b['recipientUid'] == uid;
+        final isRoomTenant =
+            userMap != null &&
+            userMap['ownerId'] == b['ownerId'] &&
+            userMap['roomId'] == b['roomId'];
+        if ((!isRecipient && !isRoomTenant) || b['status'] != 'unpaid') {
           throw StateError('Không phải hóa đơn của bạn hoặc đã báo thanh toán');
         }
         tx.update(ref('invoices', key), {

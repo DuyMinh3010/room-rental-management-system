@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/common.dart';
 import 'invoice_detail_page.dart';
+import 'maintenance_page.dart';
 import 'room_detail_page.dart';
 
 class NotificationPage extends StatelessWidget {
@@ -74,6 +75,14 @@ class NotificationPage extends StatelessWidget {
                               InvoiceDetailPage(
                                 invoiceId: n.text('invoiceId'),
                                 landlord: landlord,
+                              ),
+                            );
+                          } else if (landlord &&
+                              n.text('maintenanceId').isNotEmpty) {
+                            await openPage(
+                              context,
+                              MaintenanceDetailPage(
+                                maintenanceId: n.text('maintenanceId'),
                               ),
                             );
                           } else if (landlord && n.text('roomId').isNotEmpty) {

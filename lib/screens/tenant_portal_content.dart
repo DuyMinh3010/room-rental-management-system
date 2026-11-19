@@ -64,9 +64,10 @@ class TenantPortalContent extends StatelessWidget {
           contracts: contracts,
           maintenance: maintenance,
           onNavigate: onNavigate,
+          onRefresh: onRefresh,
         );
       case 1:
-        return _TenantInvoices(invoices: invoices);
+        return _TenantInvoices(invoices: invoices, onRefresh: onRefresh);
       case 2:
         return _TenantServices(services: services, meters: meters);
       case 3:
@@ -166,6 +167,7 @@ class _TenantOverview extends StatelessWidget {
   final Map<String, dynamic> tenant, room;
   final List<Record> invoices, contracts, maintenance;
   final ValueChanged<int> onNavigate;
+  final VoidCallback onRefresh;
 
   const _TenantOverview({
     required this.tenant,
@@ -174,6 +176,7 @@ class _TenantOverview extends StatelessWidget {
     required this.contracts,
     required this.maintenance,
     required this.onNavigate,
+    required this.onRefresh,
   });
 
   @override
@@ -181,15 +184,18 @@ class _TenantOverview extends StatelessWidget {
     final activeContract = contracts
         .where((c) => ['active', 'scheduled'].contains(c.text('status')))
         .firstOrNull;
-    final pendingInvoices = invoices
-        .where((b) => ['unpaid', 'reported'].contains(b.text('status')))
-        .toList();
+    final pendingInvoices =
+        invoices
+            .where((b) => ['unpaid', 'reported'].contains(b.text('status')))
+            .toList()
+          ..sort((a, b) => b.text('period').compareTo(a.text('period')));
     final debt = pendingInvoices.fold<num>(
       0,
       (total, bill) => total + (bill.number('total') ?? 0),
     );
+    final latestPendingBill = pendingInvoices.firstOrNull;
     final latestMaintenance = maintenance.isNotEmpty
-        ? (maintenance..sort(
+        ? ([...maintenance]..sort(
                 (a, b) => (b.time('createdAt') ?? DateTime(2000)).compareTo(
                   a.time('createdAt') ?? DateTime(2000),
                 ),
@@ -197,9 +203,11 @@ class _TenantOverview extends StatelessWidget {
               .first
         : null;
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-      children: [
+    return RefreshIndicator(
+      onRefresh: () async => onRefresh(),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+        children: [
         Text(
           'Xin chào, ${tenant['name'] ?? 'bạn'}',
           style: const TextStyle(
@@ -309,6 +317,62 @@ class _TenantOverview extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
+        if (latestPendingBill != null) ...[
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () async {
+              await openPage(
+                context,
+                InvoiceDetailPage(
+                  invoiceId: latestPendingBill.id,
+                  landlord: false,
+                ),
+              );
+              onRefresh();
+            },
+            child: _portalCard(
+              color: softBlue,
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.receipt_long_rounded, color: blue),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Hóa đơn kỳ ${latestPendingBill.text('period')}',
+                          style: const TextStyle(
+                            color: ink,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${money(latestPendingBill.data['total'])} · Hạn ${latestPendingBill.text('dueDate', 'Chưa cập nhật')}',
+                          style: const TextStyle(color: muted, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  statusPill(latestPendingBill.text('status')),
+                  const Icon(Icons.chevron_right_rounded, color: blue),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         _portalCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -328,8 +392,13 @@ class _TenantOverview extends StatelessWidget {
                 children: [
                   _QuickLink(
                     icon: Icons.receipt_long_outlined,
-                    label: 'Hóa đơn',
+                    label: 'Kiểm tra hóa đơn',
                     onTap: () => onNavigate(1),
+                  ),
+                  _QuickLink(
+                    icon: Icons.handyman_outlined,
+                    label: 'Gửi yêu cầu bảo trì',
+                    onTap: () => onNavigate(4),
                   ),
                   _QuickLink(
                     icon: Icons.bolt_outlined,
@@ -341,24 +410,21 @@ class _TenantOverview extends StatelessWidget {
                     label: 'Hợp đồng',
                     onTap: () => onNavigate(3),
                   ),
-                  _QuickLink(
-                    icon: Icons.handyman_outlined,
-                    label: 'Gửi yêu cầu',
-                    onTap: () => onNavigate(4),
-                  ),
                 ],
               ),
             ],
           ),
         ),
-      ],
+        ],
+      ),
     );
   }
 }
 
 class _TenantInvoices extends StatefulWidget {
   final List<Record> invoices;
-  const _TenantInvoices({required this.invoices});
+  final VoidCallback onRefresh;
+  const _TenantInvoices({required this.invoices, required this.onRefresh});
 
   @override
   State<_TenantInvoices> createState() => _TenantInvoicesState();
@@ -369,10 +435,23 @@ class _TenantInvoicesState extends State<_TenantInvoices> {
 
   @override
   Widget build(BuildContext context) {
+    final today = Billing.today();
     final sorted = [...widget.invoices]
       ..sort((a, b) => b.text('period').compareTo(a.text('period')));
+    bool isBillLate(Record bill) =>
+        ['unpaid', 'reported'].contains(bill.text('status')) &&
+        Billing.late(bill.data, today);
+    final unpaidCount = sorted
+        .where((b) => b.text('status') == 'unpaid')
+        .length;
+    final overdueCount = sorted.where(isBillLate).length;
+    final reportedCount = sorted
+        .where((b) => b.text('status') == 'reported')
+        .length;
+    final paidCount = sorted.where((b) => b.text('status') == 'paid').length;
     final visible = sorted.where((bill) {
       if (filter == 'all') return true;
+      if (filter == 'overdue') return isBillLate(bill);
       if (filter == 'unpaid') return bill.text('status') == 'unpaid';
       if (filter == 'reported') return bill.text('status') == 'reported';
       return bill.text('status') == 'paid';
@@ -381,129 +460,150 @@ class _TenantInvoicesState extends State<_TenantInvoices> {
         .where((b) => ['unpaid', 'reported'].contains(b.text('status')))
         .fold<num>(0, (total, b) => total + (b.number('total') ?? 0));
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 20),
-      children: [
-        _portalCard(
-          color: blue,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Tổng cần thanh toán',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                money(outstanding),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 23,
-                  fontWeight: FontWeight.w700,
+    return RefreshIndicator(
+      onRefresh: () async => widget.onRefresh(),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 20),
+        children: [
+          _portalCard(
+            color: blue,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Tổng cần thanh toán',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${widget.invoices.length} hóa đơn đã gửi',
-                style: const TextStyle(color: Colors.white70, fontSize: 11.5),
-              ),
-            ],
+                const SizedBox(height: 5),
+                Text(
+                  money(outstanding),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 23,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${widget.invoices.length} hóa đơn · $unpaidCount chưa thanh toán · $paidCount đã thanh toán',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (final item in const [
-                ('all', 'Tất cả'),
-                ('unpaid', 'Chưa thanh toán'),
-                ('reported', 'Chờ xác nhận'),
-                ('paid', 'Đã thanh toán'),
-              ])
-                Padding(
-                  padding: const EdgeInsets.only(right: 7),
-                  child: figmaFilterPill(
-                    label: item.$2,
-                    selected: filter == item.$1,
-                    onTap: () => setState(() => filter = item.$1),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (visible.isEmpty) empty('Chưa có hóa đơn trong mục này'),
-        for (final bill in visible)
-          Builder(
-            builder: (context) {
-              final today = Billing.today();
-              final isLate = ['unpaid', 'reported'].contains(bill.text('status')) &&
-                  Billing.late(bill.data, today);
-              final overdueDays = isLate
-                  ? () {
-                      final dueDt = DateTime.tryParse(bill.text('dueDate'));
-                      final todayDt = DateTime.tryParse(today);
-                      if (dueDt == null || todayDt == null) return 0;
-                      final diff = todayDt.difference(dueDt).inDays;
-                      return diff > 0 ? diff : 0;
-                    }()
-                  : 0;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: isLate ? const Color(0xFFFCA5A5) : line,
-                    width: isLate ? 1.0 : 0.7,
-                  ),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 4,
-                  ),
-                  title: Text(
-                    '${bill.text('roomName')} · ${bill.text('period')}',
-                    style: const TextStyle(
-                      color: ink,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+          const SizedBox(height: 12),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final item in [
+                  ('all', 'Tất cả (${sorted.length})'),
+                  ('unpaid', 'Chưa thanh toán ($unpaidCount)'),
+                  if (overdueCount > 0) ('overdue', 'Quá hạn ($overdueCount)'),
+                  ('reported', 'Chờ xác nhận ($reportedCount)'),
+                  ('paid', 'Đã thanh toán ($paidCount)'),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 7),
+                    child: figmaFilterPill(
+                      label: item.$2,
+                      selected: filter == item.$1,
+                      onTap: () => setState(() => filter = item.$1),
                     ),
                   ),
-                  subtitle: Padding(
-                    padding: const EdgeInsets.only(top: 5),
-                    child: Text(
-                      isLate
-                          ? '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate')}${overdueDays > 0 ? ' (Quá hạn $overdueDays ngày)' : ' (Quá hạn)'}'
-                          : '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate', 'Chưa cập nhật')}',
-                      style: TextStyle(
-                        color: isLate ? const Color(0xFFDC2626) : muted,
-                        fontSize: 12,
-                        fontWeight: isLate ? FontWeight.w600 : FontWeight.w400,
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (visible.isEmpty) empty('Chưa có hóa đơn trong mục này'),
+          for (final bill in visible)
+            Builder(
+              builder: (context) {
+                final isLate = isBillLate(bill);
+                final overdueDays = isLate
+                    ? () {
+                        final dueDt = DateTime.tryParse(bill.text('dueDate'));
+                        final todayDt = DateTime.tryParse(today);
+                        if (dueDt == null || todayDt == null) return 0;
+                        final diff = todayDt.difference(dueDt).inDays;
+                        return diff > 0 ? diff : 0;
+                      }()
+                    : 0;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isLate ? const Color(0xFFFCA5A5) : line,
+                      width: isLate ? 1.0 : 0.7,
+                    ),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    title: Text(
+                      '${bill.text('roomName')} · Kỳ ${bill.text('period')}',
+                      style: const TextStyle(
+                        color: ink,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isLate) ...[
-                        statusPill('overdue', customText: 'Quá hạn'),
-                        const SizedBox(width: 4),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isLate
+                                ? '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate')}${overdueDays > 0 ? ' (Quá hạn $overdueDays ngày)' : ' (Quá hạn)'}'
+                                : '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate', 'Chưa cập nhật')}',
+                            style: TextStyle(
+                              color: isLate ? const Color(0xFFDC2626) : muted,
+                              fontSize: 12,
+                              fontWeight: isLate
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          const Text(
+                            'Nhấn để xem chi tiết & thanh toán →',
+                            style: TextStyle(
+                              color: blue,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isLate) ...[
+                          statusPill('overdue', customText: 'Quá hạn'),
+                          const SizedBox(width: 4),
+                        ],
+                        statusPill(bill.text('status')),
                       ],
-                      statusPill(bill.text('status')),
-                    ],
+                    ),
+                    onTap: () async {
+                      await openPage(
+                        context,
+                        InvoiceDetailPage(invoiceId: bill.id, landlord: false),
+                      );
+                      widget.onRefresh();
+                    },
                   ),
-                  onTap: () => openPage(
-                    context,
-                    InvoiceDetailPage(invoiceId: bill.id, landlord: false),
-                  ),
-                ),
-              );
-            },
-          ),
-      ],
+                );
+              },
+            ),
+        ],
+      ),
     );
   }
 }
@@ -735,7 +835,7 @@ class _TenantContracts extends StatelessWidget {
   }
 }
 
-class _TenantMaintenance extends StatelessWidget {
+class _TenantMaintenance extends StatefulWidget {
   final List<Record> maintenance;
   final String roomName;
   final VoidCallback onRefresh;
@@ -745,121 +845,331 @@ class _TenantMaintenance extends StatelessWidget {
     required this.onRefresh,
   });
 
+  @override
+  State<_TenantMaintenance> createState() => _TenantMaintenanceState();
+}
+
+class _TenantMaintenanceState extends State<_TenantMaintenance> {
+  String filter = 'all';
+  bool _busy = false;
+
   Future<void> _newRequest(BuildContext context) async {
+    if (_busy) return;
     final request = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => const _TenantMaintenanceForm(),
     );
-    if (request == null || !context.mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    if (request == null || !mounted) return;
+    setState(() => _busy = true);
     try {
       await store.tenantPortal(action: 'createMaintenance', data: request);
-      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-      if (!context.mounted) return;
-      onRefresh();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Đã gửi yêu cầu bảo trì')),
-      );
+      if (!mounted) return;
+      widget.onRefresh();
+      message(this.context, 'Đã gửi yêu cầu bảo trì đến chủ trọ');
     } catch (error) {
-      if (context.mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        message(context, errorText(error));
+      if (mounted) {
+        message(this.context, errorText(error));
       }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _cancelRequest(BuildContext context, Record item) async {
+    if (_busy) return;
+    final ok = await confirm(
+      context,
+      'Hủy yêu cầu bảo trì "${item.text('title')}"?',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await store.tenantPortal(
+        action: 'cancelMaintenance',
+        data: {'id': item.id},
+      );
+      if (!mounted) return;
+      widget.onRefresh();
+      message(this.context, 'Đã hủy yêu cầu bảo trì');
+    } catch (error) {
+      if (mounted) {
+        message(this.context, errorText(error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _showDetailSheet(BuildContext context, Record item) {
+    final status = item.text('status');
+    final cost = item.number('cost') ?? 0;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.text('title'),
+                      style: const TextStyle(
+                        color: ink,
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  statusPill(
+                    status,
+                    customText: status == 'new' ? 'Mới' : null,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _InfoLine(label: 'Phòng', value: widget.roomName),
+              _InfoLine(
+                label: 'Loại sự cố',
+                value: item.text('issueType', 'Thiết bị'),
+              ),
+              _InfoLine(
+                label: 'Mức độ ưu tiên',
+                value: item.text('priority', 'Trung bình'),
+              ),
+              _InfoLine(label: 'Trạng thái', value: label(status)),
+              if (cost > 0)
+                _InfoLine(label: 'Chi phí sửa chữa', value: money(cost)),
+              _InfoLine(
+                label: 'Ngày gửi',
+                value: _dateTime(item.time('createdAt')),
+              ),
+              _InfoLine(
+                label: 'Cập nhật gần nhất',
+                value: _dateTime(item.time('updatedAt') ?? item.time('createdAt')),
+              ),
+              if (item.text('description').isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: Divider(height: 1, color: line),
+                ),
+                const Text(
+                  'Mô tả chi tiết',
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  item.text('description'),
+                  style: const TextStyle(color: ink, fontSize: 13),
+                ),
+              ],
+              if (status == 'new') ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _cancelRequest(context, item);
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFDC2626),
+                      side: const BorderSide(color: Color(0xFFFCA5A5)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.cancel_outlined, size: 18),
+                    label: const Text('Hủy yêu cầu này'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final ordered = [...maintenance]
+    final ordered = [...widget.maintenance]
       ..sort(
         (a, b) => (b.time('createdAt') ?? DateTime(2000)).compareTo(
           a.time('createdAt') ?? DateTime(2000),
         ),
       );
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-      children: [
-        _portalCard(
-          child: Row(
-            children: [
-              const Icon(Icons.info_outline_rounded, color: blue, size: 22),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Gửi yêu cầu sửa chữa cho phòng $roomName. Chủ trọ sẽ cập nhật tiến độ tại đây.',
-                  style: const TextStyle(color: ink, fontSize: 12.5),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 46,
-          child: FilledButton.icon(
-            onPressed: () => _newRequest(context),
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Tạo yêu cầu bảo trì'),
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (ordered.isEmpty) empty('Bạn chưa gửi yêu cầu bảo trì nào'),
-        for (final item in ordered)
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: line, width: 0.7),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final newCount = ordered.where((m) => m.text('status') == 'new').length;
+    final workingCount = ordered
+        .where((m) => m.text('status') == 'working')
+        .length;
+    final doneCount = ordered.where((m) => m.text('status') == 'done').length;
+    final visible = ordered
+        .where((m) => filter == 'all' || m.text('status') == filter)
+        .toList();
+
+    return RefreshIndicator(
+      onRefresh: () async => widget.onRefresh(),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+        children: [
+          _portalCard(
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.text('title'),
-                        style: const TextStyle(
-                          color: ink,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    statusPill(
-                      item.text('status'),
-                      customText: item.text('status') == 'new' ? 'Mới' : null,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  '${item.text('issueType')} · Ưu tiên ${item.text('priority')}',
-                  style: const TextStyle(color: muted, fontSize: 11.5),
-                ),
-                if (item.text('description').isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    item.text('description'),
+                const Icon(Icons.info_outline_rounded, color: blue, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Gửi yêu cầu sửa chữa cho phòng ${widget.roomName}. Chủ trọ sẽ nhận thông báo ngay và cập nhật tiến độ tại đây.',
                     style: const TextStyle(color: ink, fontSize: 12.5),
                   ),
-                ],
-                const SizedBox(height: 7),
-                Text(
-                  'Cập nhật: ${_dateTime(item.time('updatedAt') ?? item.time('createdAt'))}',
-                  style: const TextStyle(color: muted, fontSize: 10.5),
                 ),
               ],
             ),
           ),
-      ],
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 46,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : () => _newRequest(context),
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.add_rounded),
+              label: Text(
+                _busy
+                    ? 'Đang gửi yêu cầu...'
+                    : 'Gửi yêu cầu bảo trì cho chủ trọ',
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final item in [
+                  ('all', 'Tất cả (${ordered.length})'),
+                  ('new', 'Mới ($newCount)'),
+                  ('working', 'Đang xử lý ($workingCount)'),
+                  ('done', 'Hoàn thành ($doneCount)'),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 7),
+                    child: figmaFilterPill(
+                      label: item.$2,
+                      selected: filter == item.$1,
+                      onTap: () => setState(() => filter = item.$1),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (visible.isEmpty)
+            empty(
+              ordered.isEmpty
+                  ? 'Bạn chưa gửi yêu cầu bảo trì nào'
+                  : 'Không có yêu cầu bảo trì trong mục này',
+            ),
+          for (final item in visible)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: line, width: 0.7),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(15),
+                onTap: () => _showDetailSheet(context, item),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item.text('title'),
+                              style: const TextStyle(
+                                color: ink,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          statusPill(
+                            item.text('status'),
+                            customText:
+                                item.text('status') == 'new' ? 'Mới' : null,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '${item.text('issueType', 'Thiết bị')} · Ưu tiên ${item.text('priority', 'Trung bình')}',
+                        style: const TextStyle(color: muted, fontSize: 11.5),
+                      ),
+                      if (item.text('description').isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          item.text('description'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: ink, fontSize: 12.5),
+                        ),
+                      ],
+                      const SizedBox(height: 7),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Cập nhật: ${_dateTime(item.time('updatedAt') ?? item.time('createdAt'))}',
+                              style: const TextStyle(
+                                color: muted,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ),
+                          const Text(
+                            'Chi tiết →',
+                            style: TextStyle(
+                              color: blue,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

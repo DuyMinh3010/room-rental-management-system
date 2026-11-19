@@ -306,7 +306,19 @@ service cloud.firestore {
         || (tenantRoomAccess(resource.data, resource.data.roomId)
           && (resource.data.tenantId == tenantMapping().tenantId
             || resource.data.get('tenantId', '') == tenantMapping().tenantId));
-      allow update: if updatesOwned();
+      allow update: if updatesOwned() || (
+        tenantPortalSession()
+        && resource.data.ownerId == tenantMapping().ownerId
+        && resource.data.roomId == tenantMapping().roomId
+        && resource.data.tenantId == tenantMapping().tenantId
+        && resource.data.status == 'new'
+        && request.resource.data.status == 'cancelled'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'updatedAt'
+        ])
+        && request.resource.data.updatedAt == request.time
+      );
       allow create: if createsOwned() || (
         tenantPortalSession()
         && request.resource.data.keys().hasOnly([
@@ -362,9 +374,11 @@ service cloud.firestore {
     match /invoices/{id} {
       allow get: if (manager() && resource == null)
         || owns(resource.data)
-        || (signedIn() && resource.data.get('recipientUid', '') == request.auth.uid);
+        || (signedIn() && resource.data.get('recipientUid', '') == request.auth.uid)
+        || tenantRoomAccess(resource.data, resource.data.get('roomId', ''));
       allow list: if owns(resource.data)
-        || (signedIn() && resource.data.get('recipientUid', '') == request.auth.uid);
+        || (signedIn() && (resource.data.recipientUid == request.auth.uid || resource.data.get('recipientUid', '') == request.auth.uid))
+        || tenantRoomAccess(resource.data, resource.data.roomId);
 
       allow create: if createsOwned()
         && request.resource.data.status == 'unpaid'
@@ -391,7 +405,10 @@ service cloud.firestore {
         ])
       ) || (
         signedIn()
-        && resource.data.recipientUid == request.auth.uid
+        && (
+          resource.data.get('recipientUid', '') == request.auth.uid
+          || tenantRoomAccess(resource.data, resource.data.get('roomId', ''))
+        )
         && resource.data.status == 'unpaid'
         && request.resource.data.status == 'reported'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -436,10 +453,45 @@ service cloud.firestore {
           && n.body.size() <= 4000
           && n.delivery == 'in_app'
           && n.createdAt == request.time
-          && before.recipientUid == request.auth.uid
+          && (
+            before.get('recipientUid', '') == request.auth.uid
+            || tenantRoomAccess(before, before.get('roomId', ''))
+          )
           && before.status == 'unpaid'
-          && after.recipientUid == request.auth.uid
           && after.status == 'reported';
+      }
+
+      function ownMaintenanceCreate() {
+        let n = request.resource.data;
+        let maint = getAfter(
+          /databases/$(database)/documents/maintenance/$(n.maintenanceId)
+        ).data;
+
+        return tenantPortalSession()
+          && n.keys().hasOnly([
+            'ownerId',
+            'title',
+            'body',
+            'audience',
+            'roomId',
+            'maintenanceId',
+            'createdAt',
+            'delivery'
+          ])
+          && n.maintenanceId is string
+          && id == 'maint_new_' + n.maintenanceId
+          && n.audience == 'managers'
+          && n.ownerId == tenantMapping().ownerId
+          && n.roomId == tenantMapping().roomId
+          && n.title == 'Yêu cầu bảo trì mới'
+          && n.body is string
+          && n.body.size() <= 4000
+          && n.delivery == 'in_app'
+          && n.createdAt == request.time
+          && maint.ownerId == tenantMapping().ownerId
+          && maint.roomId == tenantMapping().roomId
+          && maint.requesterUid == request.auth.uid
+          && maint.status == 'new';
       }
 
       allow read: if (
@@ -454,7 +506,7 @@ service cloud.firestore {
         && request.resource.data.title is string
         && request.resource.data.body is string
         && request.resource.data.createdAt == request.time
-      ) || ownPaymentReport();
+      ) || ownPaymentReport() || ownMaintenanceCreate();
 
       allow update: if updatesOwned()
         && request.resource.data.audience in ['managers', 'tenant']

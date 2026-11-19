@@ -1769,6 +1769,10 @@ class _MeterRoomFormState extends State<MeterRoomForm> {
 }
 
 num? _initialRoomReadingForService(Record room, Record service) {
+  final rawMeters = room.data['initialMeters'];
+  if (rawMeters is Map && rawMeters[service.id] is num) {
+    return rawMeters[service.id] as num;
+  }
   final sName = service.name.toLowerCase();
   if (sName.contains('điện') || sName.contains('dien')) {
     return room.number('initialElectric');
