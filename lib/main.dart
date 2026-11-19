@@ -188,37 +188,43 @@ class MyApp extends StatelessWidget {
             );
           }
 
-          final user = auth.data;
+          return ValueListenableBuilder<bool>(
+            valueListenable: authTransitioning,
+            builder: (context, transitioning, _) {
+              final user = auth.data;
 
-          if (user == null) {
-            return const LoginPage();
-          }
-
-          return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            future: FirebaseFirestore.instance
-                .collection('managers')
-                .doc(user.uid)
-                .get(),
-            builder: (context, manager) {
-              if (manager.connectionState == ConnectionState.waiting) {
-                return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                );
+              if (user == null || transitioning) {
+                return const LoginPage();
               }
-              if (manager.hasError) {
-                return Scaffold(
-                  body: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        'Không kiểm tra được quyền tài khoản.\n${manager.error}',
+
+              return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('managers')
+                    .doc(user.uid)
+                    .snapshots(),
+                builder: (context, manager) {
+                  if (manager.connectionState == ConnectionState.waiting &&
+                      !manager.hasData) {
+                    return const Scaffold(
+                      body: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (manager.hasError) {
+                    return Scaffold(
+                      body: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            'Không kiểm tra được quyền tài khoản.\n${manager.error}',
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                );
-              }
-              final landlord = manager.data?.data()?['enabled'] == true;
-              return AppShell(key: ValueKey(user.uid), landlord: landlord);
+                    );
+                  }
+                  final landlord = manager.data?.data()?['enabled'] == true;
+                  return AppShell(key: ValueKey(user.uid), landlord: landlord);
+                },
+              );
             },
           );
         },

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/record.dart';
 import '../widgets/common.dart';
@@ -36,6 +37,12 @@ class RoomDetailPage extends StatelessWidget {
             ),
           ),
           actions: [
+            TextButton.icon(
+              onPressed: () =>
+                  _showRoomInviteDialog(context, roomId, room.name),
+              icon: const Icon(Icons.vpn_key_outlined, size: 18),
+              label: const Text('Mã mời', style: TextStyle(fontSize: 12.5)),
+            ),
             moreActionsMenu(
               iconColor: ink,
               onEdit: () => openPage(context, RoomEditPage(room: room)),
@@ -643,4 +650,171 @@ class RoomDetailPage extends StatelessWidget {
       ),
     ),
   );
+}
+
+Future<void> _showRoomInviteDialog(
+  BuildContext context,
+  String roomId,
+  String roomName,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => _RoomInviteDialog(roomId: roomId, roomName: roomName),
+);
+
+class _RoomInviteDialog extends StatefulWidget {
+  final String roomId;
+  final String roomName;
+
+  const _RoomInviteDialog({required this.roomId, required this.roomName});
+
+  @override
+  State<_RoomInviteDialog> createState() => _RoomInviteDialogState();
+}
+
+class _RoomInviteDialogState extends State<_RoomInviteDialog> {
+  String? code;
+  String? error;
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInvite();
+  }
+
+  Future<void> _loadInvite({bool forceNew = false}) async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final generated = await store.getOrCreateRoomInvite(
+        roomId: widget.roomId,
+        roomName: widget.roomName,
+        forceNew: forceNew,
+      );
+      if (!mounted) return;
+      setState(() => code = generated);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => error = errorText(e));
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentCode = code;
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text(
+        'Mã mời vào ${widget.roomName}',
+        style: const TextStyle(
+          color: ink,
+          fontSize: 17,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Gửi mã 6 ký tự này cho người thuê nhập lúc Đăng ký hoặc ở màn hình Người thuê để tự động liên kết vào đúng phòng này.',
+            style: TextStyle(color: muted, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          if (loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (error != null)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                error!,
+                style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 12),
+              ),
+            )
+          else if (currentCode != null)
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () async {
+                await Clipboard.setData(ClipboardData(text: currentCode));
+                if (context.mounted) {
+                  message(context, 'Đã sao chép mã mời $currentCode');
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: softBlue,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: blue.withValues(alpha: 0.35)),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      currentCode,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: blue,
+                        fontSize: 28,
+                        letterSpacing: 6,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Chạm để sao chép · Mỗi mã dùng cho 1 người thuê',
+                      style: TextStyle(color: muted, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: loading ? null : () => _loadInvite(forceNew: true),
+          child: const Text('Tạo mã mới'),
+        ),
+        if (currentCode != null && !loading)
+          FilledButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: currentCode));
+              if (context.mounted) {
+                message(context, 'Đã sao chép mã mời $currentCode');
+                Navigator.pop(context);
+              }
+            },
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(110, 40),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: const Text('Sao chép'),
+          )
+        else
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Đóng'),
+          ),
+      ],
+    );
+  }
 }

@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/record.dart';
+import '../services/billing.dart';
 import '../widgets/common.dart';
 import 'invoice_detail_page.dart';
 
@@ -28,6 +29,9 @@ class TenantPortalContent extends StatelessWidget {
   final Map<String, dynamic> data;
   final ValueChanged<int> onNavigate;
   final VoidCallback onRefresh;
+  final bool isLandlordAccount;
+  final VoidCallback? onSwitchToLandlord;
+  final VoidCallback? onUpgradeToLandlord;
 
   const TenantPortalContent({
     super.key,
@@ -35,6 +39,9 @@ class TenantPortalContent extends StatelessWidget {
     required this.data,
     required this.onNavigate,
     required this.onRefresh,
+    this.isLandlordAccount = false,
+    this.onSwitchToLandlord,
+    this.onUpgradeToLandlord,
   });
 
   Map<String, dynamic> get tenant => _asMap(data['tenant']);
@@ -71,7 +78,14 @@ class TenantPortalContent extends StatelessWidget {
           onRefresh: onRefresh,
         );
       default:
-        return _TenantAccount(tenant: tenant, room: room, landlord: landlord);
+        return _TenantAccount(
+          tenant: tenant,
+          room: room,
+          landlord: landlord,
+          isLandlordAccount: isLandlordAccount,
+          onSwitchToLandlord: onSwitchToLandlord,
+          onUpgradeToLandlord: onUpgradeToLandlord,
+        );
     }
   }
 }
@@ -421,39 +435,73 @@ class _TenantInvoicesState extends State<_TenantInvoices> {
         const SizedBox(height: 12),
         if (visible.isEmpty) empty('Chưa có hóa đơn trong mục này'),
         for (final bill in visible)
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: line, width: 0.7),
-            ),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 4,
-              ),
-              title: Text(
-                '${bill.text('roomName')} · ${bill.text('period')}',
-                style: const TextStyle(
-                  color: ink,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
+          Builder(
+            builder: (context) {
+              final today = Billing.today();
+              final isLate = ['unpaid', 'reported'].contains(bill.text('status')) &&
+                  Billing.late(bill.data, today);
+              final overdueDays = isLate
+                  ? () {
+                      final dueDt = DateTime.tryParse(bill.text('dueDate'));
+                      final todayDt = DateTime.tryParse(today);
+                      if (dueDt == null || todayDt == null) return 0;
+                      final diff = todayDt.difference(dueDt).inDays;
+                      return diff > 0 ? diff : 0;
+                    }()
+                  : 0;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isLate ? const Color(0xFFFCA5A5) : line,
+                    width: isLate ? 1.0 : 0.7,
+                  ),
                 ),
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 5),
-                child: Text(
-                  '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate', 'Chưa cập nhật')}',
-                  style: const TextStyle(color: muted, fontSize: 12),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 4,
+                  ),
+                  title: Text(
+                    '${bill.text('roomName')} · ${bill.text('period')}',
+                    style: const TextStyle(
+                      color: ink,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Text(
+                      isLate
+                          ? '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate')}${overdueDays > 0 ? ' (Quá hạn $overdueDays ngày)' : ' (Quá hạn)'}'
+                          : '${money(bill.data['total'])}  •  Hạn: ${bill.text('dueDate', 'Chưa cập nhật')}',
+                      style: TextStyle(
+                        color: isLate ? const Color(0xFFDC2626) : muted,
+                        fontSize: 12,
+                        fontWeight: isLate ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isLate) ...[
+                        statusPill('overdue', customText: 'Quá hạn'),
+                        const SizedBox(width: 4),
+                      ],
+                      statusPill(bill.text('status')),
+                    ],
+                  ),
+                  onTap: () => openPage(
+                    context,
+                    InvoiceDetailPage(invoiceId: bill.id, landlord: false),
+                  ),
                 ),
-              ),
-              trailing: statusPill(bill.text('status')),
-              onTap: () => openPage(
-                context,
-                InvoiceDetailPage(invoiceId: bill.id, landlord: false),
-              ),
-            ),
+              );
+            },
           ),
       ],
     );
@@ -934,10 +982,16 @@ class _TenantMaintenanceFormState extends State<_TenantMaintenanceForm> {
 
 class _TenantAccount extends StatelessWidget {
   final Map<String, dynamic> tenant, room, landlord;
+  final bool isLandlordAccount;
+  final VoidCallback? onSwitchToLandlord;
+  final VoidCallback? onUpgradeToLandlord;
   const _TenantAccount({
     required this.tenant,
     required this.room,
     required this.landlord,
+    required this.isLandlordAccount,
+    this.onSwitchToLandlord,
+    this.onUpgradeToLandlord,
   });
 
   @override
@@ -987,6 +1041,36 @@ class _TenantAccount extends StatelessWidget {
             ],
           ),
         ),
+        if (!isLandlordAccount && onUpgradeToLandlord != null) ...[
+          const SizedBox(height: 14),
+          _portalCard(
+            color: softBlue,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Bạn có phòng trọ cho thuê?',
+                  style: TextStyle(
+                    color: blue,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Nâng cấp tài khoản để quản lý phòng trọ của riêng bạn mà vẫn giữ thông tin thuê hiện tại.',
+                  style: TextStyle(color: muted, fontSize: 11.5),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  onPressed: onUpgradeToLandlord,
+                  icon: const Icon(Icons.home_work_outlined, size: 18),
+                  label: const Text('Đăng ký trở thành Chủ trọ'),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 14),
         _portalCard(
           child: Column(

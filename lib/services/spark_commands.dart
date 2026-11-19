@@ -1214,6 +1214,38 @@ class SparkCommands {
           '${roomId}_${sid}_${Billing.shift(p, -1)}',
         );
         if (meter != null) owned(meter, 'Chỉ số');
+        if (meter == null) {
+          // Tự động tìm baseline từ hợp đồng / phòng để khởi tạo mốc chỉ số
+          final sNameLower = '${s['name'] ?? ''}'.toLowerCase();
+          final isElectric =
+              sNameLower.contains('điện') || sNameLower.contains('dien');
+          final isWater =
+              sNameLower.contains('nước') || sNameLower.contains('nuoc');
+          final baseline = (isElectric
+                  ? (c['initialElectric'] ?? room['initialElectric'])
+                  : isWater
+                      ? (c['initialWater'] ?? room['initialWater'])
+                      : 0) as num? ??
+              0;
+          meter = {
+            'ownerId': uid,
+            'roomId': roomId,
+            'serviceId': sid,
+            'period': p,
+            'previous': baseline,
+            'current': baseline,
+            'usage': 0,
+            'serviceName': s['name'],
+            'unit': s['unit'],
+          };
+          if (commit) {
+            tx.set(ref('meters', '${roomId}_${sid}_$p'), {
+              ...meter,
+              'createdAt': stamp(),
+              'updatedAt': stamp(),
+            });
+          }
+        }
         meters[sid] = meter;
       }
     }
@@ -1306,6 +1338,7 @@ class SparkCommands {
     final day = Billing.today();
     final p = day.substring(0, 7);
     final settings = (await ref('settings', uid).get()).data() ?? {};
+    final autoBilling = settings['autoBilling'] ?? true;
     int created = 0, existing = 0, blocked = 0, late = 0;
     final errors = <String>[];
     for (final snapshot in await list('contracts')) {
@@ -1330,7 +1363,7 @@ class SparkCommands {
         }
         return current;
       });
-      if (settings['autoBilling'] != true || c['status'] != 'active') continue;
+      if (!autoBilling || c['status'] != 'active') continue;
       try {
         final room = owned(
           (await ref('rooms', id(c['roomId'])).get()).data(),
@@ -1384,10 +1417,25 @@ class SparkCommands {
           notice(
             tx,
             overdueId,
-            'Hóa đơn quá hạn hơn 5 ngày',
-            '${current['roomName']} · ${current['period']}: ${current['total']}đ',
+            'Hóa đơn quá hạn thanh toán',
+            '${current['roomName']} · Kỳ ${current['period']}: ${current['total']}đ (Hạn ${current['dueDate']})',
             invoiceId: b['_id'],
           );
+          if ('${current['recipientUid'] ?? ''}'.isNotEmpty) {
+            final tenantNoticeId = 'overdue_tenant_${b['_id']}';
+            final oldTenantLate =
+                await read(tx, 'notifications', tenantNoticeId);
+            if (oldTenantLate == null) {
+              notice(
+                tx,
+                tenantNoticeId,
+                'Cảnh báo quá hạn thanh toán',
+                'Hóa đơn phòng ${current['roomName']} kỳ ${current['period']} (${current['total']}đ) đã quá hạn (hạn ${current['dueDate']}). Vui lòng thanh toán sớm.',
+                recipient: current['recipientUid'],
+                invoiceId: b['_id'],
+              );
+            }
+          }
           return true;
         }
         return false;
@@ -1395,16 +1443,18 @@ class SparkCommands {
       if (added) late++;
     }
     if (errors.isNotEmpty) {
-      await locked((tx) async {
-        notice(
-          tx,
-          'billing_blocked_$p',
-          'Có phòng chưa xuất được hóa đơn',
-          errors
-              .join('\n')
-              .substring(0, errors.join('\n').length.clamp(0, 3500)),
-        );
-      });
+      try {
+        await locked((tx) async {
+          notice(
+            tx,
+            'billing_blocked_${uid}_$p',
+            'Có phòng chưa xuất được hóa đơn',
+            errors
+                .join('\n')
+                .substring(0, errors.join('\n').length.clamp(0, 3500)),
+          );
+        });
+      } catch (_) {}
     }
     return {
       'created': created,
@@ -1412,7 +1462,7 @@ class SparkCommands {
       'blocked': blocked,
       'late': late,
       'day': day,
-      'autoBilling': settings['autoBilling'] == true,
+      'autoBilling': autoBilling,
     };
   }
 }

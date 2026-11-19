@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/record.dart';
+import '../services/billing.dart';
 import '../services/document_service.dart';
 import '../widgets/common.dart';
 import 'contract_detail_page.dart';
@@ -147,10 +148,15 @@ class InvoiceDetailPage extends StatelessWidget {
                 onTap: () async {
                   Navigator.pop(ctx);
                   await Clipboard.setData(
-                    ClipboardData(text: DocumentService.formatInvoiceText(bill)),
+                    ClipboardData(
+                      text: DocumentService.formatInvoiceText(bill),
+                    ),
                   );
                   if (context.mounted) {
-                    message(context, 'Đã sao chép nội dung hóa đơn vào bộ nhớ tạm');
+                    message(
+                      context,
+                      'Đã sao chép nội dung hóa đơn vào bộ nhớ tạm',
+                    );
                   }
                 },
               ),
@@ -225,7 +231,10 @@ class InvoiceDetailPage extends StatelessWidget {
                     ),
                   ),
                   items: const [
-                    DropdownMenuItem(value: 'bank', child: Text('Chuyển khoản')),
+                    DropdownMenuItem(
+                      value: 'bank',
+                      child: Text('Chuyển khoản'),
+                    ),
                     DropdownMenuItem(value: 'cash', child: Text('Tiền mặt')),
                   ],
                   onChanged: (v) {
@@ -670,6 +679,11 @@ class InvoiceDetailPage extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
+                          if (['unpaid', 'reported'].contains(status) &&
+                              Billing.late(bill.data, Billing.today())) ...[
+                            statusPill('overdue', customText: 'Quá hạn'),
+                            const SizedBox(width: 4),
+                          ],
                           statusPill(status),
                         ],
                       ),
@@ -699,6 +713,41 @@ class InvoiceDetailPage extends StatelessWidget {
                                   'Ngày giờ thanh toán: $paidDateTimeText',
                                   style: const TextStyle(
                                     color: Color(0xFF15803D),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else if (['unpaid', 'reported'].contains(status) &&
+                          Billing.late(bill.data, Billing.today())) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 9,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFEE2E2),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFFCA5A5)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.warning_amber_rounded,
+                                size: 18,
+                                color: Color(0xFFDC2626),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Hóa đơn đã quá hạn thanh toán từ ngày ${bill.text('dueDate')}',
+                                  style: const TextStyle(
+                                    color: Color(0xFFDC2626),
                                     fontSize: 13,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -975,7 +1024,10 @@ class InvoiceDetailPage extends StatelessWidget {
                                 bill,
                                 suggestedDeposit: suggestedDeposit,
                               ),
-                              icon: const Icon(Icons.edit_note_rounded, size: 18),
+                              icon: const Icon(
+                                Icons.edit_note_rounded,
+                                size: 18,
+                              ),
                               label: const Text('Cập nhật'),
                             ),
                         ],
@@ -1126,10 +1178,8 @@ class InvoiceDetailPage extends StatelessWidget {
                           OutlinedButton(
                             onPressed: () => perform(
                               context,
-                              () => store.command(
-                                'resendInvoice',
-                                id: invoiceId,
-                              ),
+                              () =>
+                                  store.command('resendInvoice', id: invoiceId),
                               'Đã gửi vào hộp thư người thuê',
                             ),
                             style: OutlinedButton.styleFrom(
@@ -1139,9 +1189,7 @@ class InvoiceDetailPage extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            child: const Text(
-                              'Gửi / gửi lại hóa đơn cho người thuê',
-                            ),
+                            child: const Text('Gửi hóa đơn cho người thuê'),
                           ),
                         ],
                       ],
@@ -1196,7 +1244,7 @@ class InvoiceDetailPage extends StatelessWidget {
                           ),
                           child: Text(
                             canLandlordConfirm
-                                ? 'Xác nhận đã thanh toán (kèm Cọc / Ghi chú)'
+                                ? 'Xác nhận đã thanh toán'
                                 : 'Tôi đã chuyển tiền – báo chủ trọ',
                           ),
                         ),

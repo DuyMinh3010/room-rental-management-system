@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/record.dart';
+import '../services/billing.dart';
 import '../widgets/common.dart';
 import 'invoice_create_page.dart';
 import 'invoice_detail_page.dart';
@@ -93,14 +94,25 @@ class _InvoicePageState extends State<InvoicePage> {
       body: RecordsView(
         collection: 'invoices',
         builder: (_, rawAll) {
+          final today = Billing.today();
           final all = rawAll.where((b) => !b.archived).toList();
           final bills = all
               .where(
-                (b) =>
-                    (filter == 'all' || b.text('status') == filter) &&
-                    '${b.text('code')} ${b.text('roomName')} ${b.text('tenantName')} ${b.text('period')}'
-                        .toLowerCase()
-                        .contains(query.toLowerCase()),
+                (b) {
+                  final matchesFilter = () {
+                    if (filter == 'all') return true;
+                    if (filter == 'overdue') {
+                      return ['unpaid', 'reported'].contains(b.text('status')) &&
+                          Billing.late(b.data, today);
+                    }
+                    return b.text('status') == filter;
+                  }();
+                  final matchesQuery =
+                      '${b.text('code')} ${b.text('roomName')} ${b.text('tenantName')} ${b.text('period')}'
+                          .toLowerCase()
+                          .contains(query.toLowerCase());
+                  return matchesFilter && matchesQuery;
+                },
               )
               .toList();
           bills.sort(
@@ -118,6 +130,7 @@ class _InvoicePageState extends State<InvoicePage> {
           const filters = [
             ('all', 'Tất cả'),
             ('unpaid', 'Chưa thanh toán'),
+            ('overdue', 'Quá hạn'),
             ('reported', 'Chờ xác nhận'),
             ('paid', 'Đã thanh toán'),
             ('void', 'Đã hủy'),
@@ -200,6 +213,16 @@ class _InvoicePageState extends State<InvoicePage> {
                       'unpaid',
                       'reported',
                     ].contains(b.text('status'));
+                    final isLate = unpaid && Billing.late(b.data, today);
+                    final overdueDays = isLate
+                        ? () {
+                            final dueDt = DateTime.tryParse(b.text('dueDate'));
+                            final todayDt = DateTime.tryParse(today);
+                            if (dueDt == null || todayDt == null) return 0;
+                            final diff = todayDt.difference(dueDt).inDays;
+                            return diff > 0 ? diff : 0;
+                          }()
+                        : 0;
                     final paidTimeText = b.text('paidDateTime').isNotEmpty
                         ? b.text('paidDateTime')
                         : formatDateTimeVi(
@@ -211,7 +234,12 @@ class _InvoicePageState extends State<InvoicePage> {
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: line, width: 0.7),
+                        border: Border.all(
+                          color: isLate
+                              ? const Color(0xFFFCA5A5)
+                              : line,
+                          width: isLate ? 1.0 : 0.7,
+                        ),
                       ),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
@@ -239,6 +267,10 @@ class _InvoicePageState extends State<InvoicePage> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
+                                  if (isLate) ...[
+                                    statusPill('overdue', customText: 'Quá hạn'),
+                                    const SizedBox(width: 4),
+                                  ],
                                   statusPill(b.text('status')),
                                   moreActionsMenu(
                                     onEdit: () => openPage(
@@ -264,13 +296,17 @@ class _InvoicePageState extends State<InvoicePage> {
                                 b.text('status') == 'paid' &&
                                         paidTimeText.isNotEmpty
                                     ? 'Ngày giờ thanh toán: $paidTimeText'
-                                    : 'Hạn thanh toán: ${b.text('dueDate')}',
+                                    : isLate
+                                        ? 'Hạn thanh toán: ${b.text('dueDate')}${overdueDays > 0 ? ' (Quá hạn $overdueDays ngày)' : ' (Quá hạn)'}'
+                                        : 'Hạn thanh toán: ${b.text('dueDate')}',
                                 style: TextStyle(
                                   color: b.text('status') == 'paid'
                                       ? const Color(0xFF16A34A)
-                                      : muted,
+                                      : isLate
+                                          ? const Color(0xFFDC2626)
+                                          : muted,
                                   fontSize: 10.5,
-                                  fontWeight: b.text('status') == 'paid'
+                                  fontWeight: (b.text('status') == 'paid' || isLate)
                                       ? FontWeight.w600
                                       : FontWeight.w400,
                                 ),

@@ -58,12 +58,15 @@ class Billing {
     return iso(DateTime.utc(y, m, day > last ? last : day));
   }
 
-  static bool late(Map<String, dynamic> b, String day) =>
-      ['unpaid', 'reported'].contains(b['status']) &&
-      DateTime.parse(date(day))
-              .difference(DateTime.parse(date(b['dueDate'])))
-              .inDays >
-          5;
+  static bool late(Map<String, dynamic> b, String day) {
+    if (!['unpaid', 'reported'].contains(b['status'])) return false;
+    final due = '${b['dueDate'] ?? ''}'.trim();
+    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(due)) return false;
+    final dueDt = DateTime.tryParse(due);
+    final todayDt = DateTime.tryParse(date(day));
+    if (dueDt == null || todayDt == null) return false;
+    return todayDt.isAfter(dueDt);
+  }
 
   static Map<String, dynamic> build({
     required Map<String, dynamic> contract,
@@ -110,15 +113,15 @@ class Billing {
         case 'meter':
           final m = meters[s['_id']];
           if (m == null || (m['period'] != mp && m['period'] != p)) {
-            throw StateError(
-              'Thiếu chỉ số ${s['name']} (hãy nhập chỉ số kỳ $p hoặc $mp tại mục Dịch vụ > Nhập chỉ số)',
-            );
+            usedMeterPeriod = p;
+            quantity = 0;
+          } else {
+            usedMeterPeriod = '${m['period']}';
+            final old = number(m['previous'], 'Chỉ số cũ', integer: false),
+                current = number(m['current'], 'Chỉ số mới', integer: false);
+            if (current < old) throw StateError('Chỉ số mới nhỏ hơn chỉ số cũ');
+            quantity = num.parse((current - old).toStringAsFixed(3));
           }
-          usedMeterPeriod = '${m['period']}';
-          final old = number(m['previous'], 'Chỉ số cũ', integer: false),
-              current = number(m['current'], 'Chỉ số mới', integer: false);
-          if (current < old) throw StateError('Chỉ số mới nhỏ hơn chỉ số cũ');
-          quantity = num.parse((current - old).toStringAsFixed(3));
           break;
         default:
           throw StateError('Cách tính dịch vụ không hợp lệ');
