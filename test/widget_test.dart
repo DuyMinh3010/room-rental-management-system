@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:capstone1/screens/login_page.dart';
+import 'package:capstone1/screens/register_page.dart';
 
 void main() {
   testWidgets('login page renders', (WidgetTester tester) async {
@@ -55,5 +56,51 @@ void main() {
 
     expect(find.text('Vui lòng nhập email'), findsOneWidget);
     expect(find.text('Vui lòng nhập mật khẩu'), findsOneWidget);
+  });
+
+  testWidgets('register page renders role selection and requires a role', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: RegisterPage()));
+
+    expect(find.text('Chủ trọ'), findsOneWidget);
+    expect(find.text('Người thuê'), findsOneWidget);
+    expect(find.text('Số điện thoại'), findsOneWidget);
+
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Tạo tài khoản'),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Tạo tài khoản'));
+    await tester.pump();
+
+    expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsOneWidget);
+  });
+
+  testWidgets('register role selection clears role error and shows hint', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: RegisterPage()));
+
+    await tester.tap(find.text('Chủ trọ'));
+    await tester.pump();
+
+    expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsNothing);
+    expect(
+      find.text(
+        'Tài khoản Chủ trọ có quyền quản lý phòng, hợp đồng, hóa đơn và khách thuê.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Người thuê'));
+    await tester.pump();
+
+    expect(
+      find.text(
+        'Nhập mã mời 6 ký tự từ chủ trọ để tự động vào đúng phòng ngay khi tạo tài khoản.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Mã mời vào phòng (tùy chọn)'), findsOneWidget);
   });
 }

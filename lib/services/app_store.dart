@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,6 +10,7 @@ import 'spark_commands.dart';
 class AppStore {
   AppStore._();
   static final instance = AppStore._();
+  static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   final db = FirebaseFirestore.instance;
   String get uid => FirebaseAuth.instance.currentUser!.uid;
   Stream<List<Record>> watch(
@@ -70,13 +73,209 @@ class AppStore {
     return commands.command(action, key: id, d: data ?? {}, args: args);
   }
 
+  Future<String> getOrCreateRoomInvite({
+    required String roomId,
+    required String roomName,
+    bool forceNew = false,
+  }) async {
+    final ownerUid = uid;
+    final existingSnapshot = await db
+        .collection('roomInvites')
+        .where('ownerId', isEqualTo: ownerUid)
+        .get();
+    final activeDocs = existingSnapshot.docs.where((doc) {
+      final data = doc.data();
+      return data['roomId'] == roomId && data['status'] == 'active';
+    }).toList();
+
+    if (!forceNew && activeDocs.isNotEmpty) {
+      return '${activeDocs.first.data()['code'] ?? activeDocs.first.id}';
+    }
+
+    if (forceNew) {
+      for (final doc in activeDocs) {
+        await doc.reference.update({'status': 'revoked'});
+      }
+    }
+
+    final random = Random.secure();
+    for (var attempt = 0; attempt < 12; attempt++) {
+      final code = List.generate(
+        6,
+        (_) => _inviteAlphabet[random.nextInt(_inviteAlphabet.length)],
+      ).join();
+      final inviteRef = db.collection('roomInvites').doc(code);
+      final existing = await inviteRef.get();
+      if (existing.exists) continue;
+      await inviteRef.set({
+        'code': code,
+        'ownerId': ownerUid,
+        'roomId': roomId,
+        'roomName': roomName,
+        'status': 'active',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      return code;
+    }
+    throw StateError('Chưa tạo được mã mời mới. Vui lòng thử lại.');
+  }
+
+  Future<Map<String, dynamic>> joinRoomByInviteCode(
+    String rawCode, {
+    String? displayName,
+    String? phone,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw StateError('Bạn cần đăng nhập trước khi nhập mã mời.');
+    }
+    final code = rawCode
+        .trim()
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    if (code.length != 6) {
+      throw StateError('Mã mời vào phòng phải gồm đúng 6 ký tự chữ và số.');
+    }
+    final normalizedEmail = (user.email ?? '').trim().toLowerCase();
+    final fallbackName = user.displayName?.trim().isNotEmpty == true
+        ? user.displayName!.trim()
+        : normalizedEmail.contains('@')
+        ? normalizedEmail.substring(0, normalizedEmail.indexOf('@'))
+        : 'Người thuê';
+    final resolvedName = (displayName ?? '').trim().isNotEmpty
+        ? displayName!.trim()
+        : fallbackName;
+    final resolvedPhone = (phone ?? '').trim();
+
+    final inviteRef = db.collection('roomInvites').doc(code);
+    final userRef = db.collection('users').doc(user.uid);
+    final tenantRef = db.collection('tenants').doc();
+
+    return db.runTransaction((transaction) async {
+      final inviteSnap = await transaction.get(inviteRef);
+      final userSnap = await transaction.get(userRef);
+
+      if (!inviteSnap.exists) {
+        throw StateError('Mã mời "$code" không tồn tại. Hãy kiểm tra lại.');
+      }
+      final invite = inviteSnap.data()!;
+      final status = '${invite['status'] ?? ''}';
+      if (status == 'used') {
+        throw StateError(
+          'Mã mời này đã được sử dụng. Hãy nhờ chủ trọ tạo mã mời mới.',
+        );
+      }
+      if (status != 'active') {
+        throw StateError(
+          'Mã mời này đã bị hủy hoặc hết hiệu lực. Hãy nhờ chủ trọ cấp mã mới.',
+        );
+      }
+      final ownerId = '${invite['ownerId'] ?? ''}';
+      final roomId = '${invite['roomId'] ?? ''}';
+      final roomName = '${invite['roomName'] ?? ''}';
+      if (ownerId.isEmpty || roomId.isEmpty) {
+        throw StateError('Mã mời không hợp lệ. Hãy nhờ chủ trọ tạo mã mới.');
+      }
+
+      final priorMapping = userSnap.data();
+      final priorTenantId = '${priorMapping?['tenantId'] ?? ''}';
+      if (priorTenantId.isNotEmpty) {
+        final priorTenantSnap = await transaction.get(
+          db.collection('tenants').doc(priorTenantId),
+        );
+        final priorTenant = priorTenantSnap.data();
+        final stillActive =
+            priorTenantSnap.exists &&
+            priorTenant != null &&
+            priorTenant['archived'] != true &&
+            priorTenant['authUid'] == user.uid &&
+            '${priorTenant['roomId'] ?? ''}'.isNotEmpty;
+        if (stillActive) {
+          if (priorTenant['roomId'] == roomId) {
+            throw StateError('Tài khoản của bạn đã tham gia phòng này rồi.');
+          }
+          throw StateError(
+            'Tài khoản của bạn đang liên kết với một phòng khác. Hãy nhờ chủ trọ cũ kết thúc hồ sơ trước.',
+          );
+        }
+      }
+
+      transaction.set(tenantRef, {
+        'ownerId': ownerId,
+        'name': resolvedName,
+        'phone': resolvedPhone,
+        'email': normalizedEmail,
+        'identity': '',
+        'birthday': '',
+        'address': '',
+        'note': 'Tham gia bằng mã mời $code',
+        'role': 'member',
+        'cccdFrontUrl': '',
+        'cccdBackUrl': '',
+        'roomId': roomId,
+        'archived': false,
+        'authUid': user.uid,
+        'inviteCode': code,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(userRef, {
+        'tenantId': tenantRef.id,
+        'ownerId': ownerId,
+        'roomId': roomId,
+      });
+      transaction.update(inviteRef, {
+        'status': 'used',
+        'usedByUid': user.uid,
+        'usedByName': resolvedName,
+        'tenantId': tenantRef.id,
+        'usedAt': FieldValue.serverTimestamp(),
+      });
+
+      return {
+        'roomId': roomId,
+        'roomName': roomName,
+        'ownerId': ownerId,
+        'tenantId': tenantRef.id,
+      };
+    });
+  }
+
+  Future<Map<String, dynamic>?> loadTenantPortalOrNull() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    final userSnapshot = await db.collection('users').doc(user.uid).get();
+    var mapping = userSnapshot.data();
+    mapping ??= await _restoreTenantMapping(user);
+    if (mapping == null ||
+        mapping['tenantId'] is! String ||
+        mapping['ownerId'] is! String ||
+        mapping['roomId'] is! String) {
+      return null;
+    }
+    final tenantId = mapping['tenantId'] as String;
+    final tenantSnapshot = await db.collection('tenants').doc(tenantId).get();
+    final tenantData = tenantSnapshot.data();
+    if (!tenantSnapshot.exists ||
+        tenantData == null ||
+        tenantData['archived'] == true ||
+        tenantData['authUid'] != user.uid ||
+        '${tenantData['roomId'] ?? ''}'.isEmpty) {
+      return null;
+    }
+    return _loadTenantPortal(user);
+  }
+
   Future<Map<String, dynamic>> tenantPortal({
     String action = 'load',
     Map<String, dynamic> data = const {},
   }) async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null || !user.emailVerified) {
-      throw StateError('Hãy đăng nhập và xác minh email trước.');
+    if (user == null) {
+      throw StateError('Hãy đăng nhập trước.');
+    }
+    if (action == 'lookup' && !user.emailVerified) {
+      throw StateError('Hãy xác minh email trước.');
     }
     return switch (action) {
       'lookup' => _lookupTenantByEmail(user),

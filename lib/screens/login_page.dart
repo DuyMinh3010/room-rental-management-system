@@ -42,6 +42,7 @@ class _LoginPageState extends State<LoginPage> {
       roleAuthError = null;
       busy = true;
     });
+    authTransitioning.value = true;
     try {
       final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email.text.trim().toLowerCase(),
@@ -62,16 +63,18 @@ class _LoginPageState extends State<LoginPage> {
         rethrow;
       }
       final isLandlord = manager.data()?['enabled'] == true;
-      if (isLandlord != (selectedRole == _LoginRole.landlord)) {
+      final wantsLandlord = selectedRole == _LoginRole.landlord;
+      if (wantsLandlord && !isLandlord) {
         await FirebaseAuth.instance.signOut();
         if (mounted) {
           setState(() {
-            roleAuthError = isLandlord
-                ? 'Tài khoản này là Chủ trọ. Hãy chọn đúng vai trò để đăng nhập.'
-                : 'Tài khoản này chưa được cấp quyền Chủ trọ. Hãy chọn Người thuê hoặc liên hệ chủ hệ thống.';
+            roleAuthError =
+                'Tài khoản này chưa được cấp quyền Chủ trọ. Hãy đăng nhập với vai trò Người thuê hoặc nâng cấp tài khoản trong mục Tài khoản.';
           });
         }
+        return;
       }
+      preferredLandlordMode.value = wantsLandlord;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -99,6 +102,7 @@ class _LoginPageState extends State<LoginPage> {
       });
       formKey.currentState?.validate();
     } finally {
+      authTransitioning.value = false;
       if (mounted) setState(() => busy = false);
     }
   }
@@ -456,7 +460,36 @@ class _LoginPageState extends State<LoginPage> {
                       const SizedBox(height: 16),
                       Center(
                         child: GestureDetector(
-                          onTap: () => openPage(context, const RegisterPage()),
+                          onTap: () async {
+                            final result = await Navigator.of(context)
+                                .push<RegisterResult>(
+                                  MaterialPageRoute(
+                                    builder: (_) => const RegisterPage(),
+                                  ),
+                                );
+                            if (result == null || !mounted) return;
+                            setState(() {
+                              selectedRole =
+                                  result.role == RegisterRole.landlord
+                                  ? _LoginRole.landlord
+                                  : _LoginRole.tenant;
+                              email.text = result.email;
+                              password.clear();
+                              emailAuthError = null;
+                              passwordAuthError = null;
+                              roleAuthError = null;
+                            });
+                            final joinedRoom =
+                                (result.joinedRoomName ?? '').trim();
+                            message(
+                              context,
+                              result.role == RegisterRole.landlord
+                                  ? 'Đăng ký tài khoản Chủ trọ thành công. Hãy đăng nhập.'
+                                  : joinedRoom.isNotEmpty
+                                  ? 'Đăng ký & vào $joinedRoom thành công! Hãy đăng nhập.'
+                                  : 'Đăng ký tài khoản Người thuê thành công. Hãy đăng nhập và nhập mã mời phòng.',
+                            );
+                          },
                           child: RichText(
                             text: const TextSpan(
                               text: 'Chưa có tài khoản?  ',

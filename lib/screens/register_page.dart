@@ -1,8 +1,23 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/validators.dart';
 import '../widgets/common.dart';
+
+enum RegisterRole { landlord, tenant }
+
+class RegisterResult {
+  final String email;
+  final RegisterRole role;
+  final String? joinedRoomName;
+
+  const RegisterResult({
+    required this.email,
+    required this.role,
+    this.joinedRoomName,
+  });
+}
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -13,19 +28,28 @@ class RegisterPage extends StatefulWidget {
 class _RegisterPageState extends State<RegisterPage> {
   final formKey = GlobalKey<FormState>();
   final name = TextEditingController();
+  final phone = TextEditingController();
   final contact = TextEditingController();
+  final inviteCode = TextEditingController();
   final password = TextEditingController();
   final confirm = TextEditingController();
+  RegisterRole? selectedRole;
   bool agreed = false;
   bool hidePass = true;
   bool hideConfirm = true;
   bool busy = false;
-  String? emailAuthError, passwordAuthError, agreementError;
+  String? roleError,
+      inviteAuthError,
+      emailAuthError,
+      passwordAuthError,
+      agreementError;
 
   @override
   void dispose() {
     name.dispose();
+    phone.dispose();
     contact.dispose();
+    inviteCode.dispose();
     password.dispose();
     confirm.dispose();
     super.dispose();
@@ -34,25 +58,128 @@ class _RegisterPageState extends State<RegisterPage> {
   Future<void> _register() async {
     if (busy) return;
     setState(() {
+      roleError = selectedRole == null
+          ? 'Vui lòng chọn Chủ trọ hoặc Người thuê'
+          : null;
+      inviteAuthError = null;
       agreementError = agreed ? null : 'Bạn cần đồng ý điều khoản';
     });
-    if (!formKey.currentState!.validate() || !agreed) return;
-    setState(() => busy = true);
+    if (selectedRole == null || !formKey.currentState!.validate() || !agreed) {
+      return;
+    }
+    final role = selectedRole!;
+    final displayName = name.text.trim();
+    final normalizedPhone = phone.text.trim();
+    final normalizedEmail = contact.text.trim().toLowerCase();
+    final rawInvite = role == RegisterRole.tenant
+        ? inviteCode.text.trim().toUpperCase().replaceAll(
+            RegExp(r'[^A-Z0-9]'),
+            '',
+          )
+        : '';
+    setState(() {
+      emailAuthError = null;
+      passwordAuthError = null;
+      inviteAuthError = null;
+      busy = true;
+    });
+    authTransitioning.value = true;
+    String? joinedRoomName;
     try {
       final credential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
-            email: contact.text.trim().toLowerCase(),
+            email: normalizedEmail,
             password: password.text,
           );
       final user = credential.user;
       if (user == null) {
         throw StateError('Firebase không trả về tài khoản vừa tạo');
       }
-      await user.updateDisplayName(name.text.trim());
-      await user.sendEmailVerification();
-      if (mounted) Navigator.pop(context);
+      await user.updateDisplayName(displayName);
+      await user.getIdToken(true);
+      if (role == RegisterRole.landlord) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('managers')
+              .doc(user.uid)
+              .set({
+                'enabled': true,
+                'role': 'landlord',
+                'name': displayName,
+                'email': normalizedEmail,
+                'phone': normalizedPhone,
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+          try {
+            await FirebaseFirestore.instance
+                .collection('settings')
+                .doc(user.uid)
+                .set({
+                  'ownerId': user.uid,
+                  'name': displayName,
+                  if (normalizedPhone.isNotEmpty) 'phone': normalizedPhone,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                }, SetOptions(merge: true));
+          } catch (_) {
+            // Không chặn đăng ký nếu settings ghi sau.
+          }
+        } catch (e) {
+          try {
+            await user.delete();
+          } catch (_) {
+            await FirebaseAuth.instance.signOut();
+          }
+          if (e is FirebaseException && e.code == 'permission-denied') {
+            throw StateError(
+              'Chưa cấp quyền đăng ký Chủ trọ trên Firestore. Hãy triển khai firestore.rules mới nhất.',
+            );
+          }
+          rethrow;
+        }
+      } else if (rawInvite.isNotEmpty) {
+        try {
+          final joined = await store.joinRoomByInviteCode(
+            rawInvite,
+            displayName: displayName,
+            phone: normalizedPhone,
+          );
+          joinedRoomName = '${joined['roomName'] ?? ''}';
+        } catch (e) {
+          try {
+            await user.delete();
+          } catch (_) {
+            await FirebaseAuth.instance.signOut();
+          }
+          if (!mounted) return;
+          setState(() {
+            inviteAuthError = e is FirebaseException && e.code == 'permission-denied'
+                ? 'Chưa triển khai firestore.rules cho mã mời phòng.'
+                : errorText(e);
+          });
+          formKey.currentState?.validate();
+          return;
+        }
+      }
+      try {
+        await user.sendEmailVerification();
+      } catch (_) {
+        // Không làm hỏng luồng đăng ký nếu gửi email xác minh gặp giới hạn tạm thời.
+      }
+      await FirebaseAuth.instance.signOut();
+      authTransitioning.value = false;
+      if (mounted) {
+        Navigator.pop(
+          context,
+          RegisterResult(
+            email: normalizedEmail,
+            role: role,
+            joinedRoomName: joinedRoomName,
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
+      final detail = errorText(e);
       setState(() {
         if (e is FirebaseAuthException) {
           switch (e.code) {
@@ -63,16 +190,65 @@ class _RegisterPageState extends State<RegisterPage> {
             case 'weak-password':
               passwordAuthError = 'Mật khẩu chưa đủ mạnh';
             default:
-              passwordAuthError = errorText(e);
+              passwordAuthError = detail;
           }
         } else {
-          passwordAuthError = errorText(e);
+          passwordAuthError = detail;
         }
       });
       formKey.currentState?.validate();
+      if (e is! FirebaseAuthException) {
+        message(context, detail);
+      }
     } finally {
+      authTransitioning.value = false;
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  Widget _roleButton(RegisterRole role, String label, IconData icon) {
+    final selected = selectedRole == role;
+    return Expanded(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: busy
+              ? null
+              : () => setState(() {
+                  selectedRole = role;
+                  roleError = null;
+                }),
+          child: Container(
+            height: 46,
+            decoration: BoxDecoration(
+              color: selected ? softBlue : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected ? blue : Colors.white,
+                width: selected ? 1.4 : 1,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18, color: selected ? blue : muted),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? blue : ink,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _fieldLabel(String label) => Padding(
@@ -158,7 +334,95 @@ class _RegisterPageState extends State<RegisterPage> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 22),
+              const SizedBox(height: 18),
+              _fieldLabel('Đăng ký với vai trò'),
+              Row(
+                children: [
+                  _roleButton(
+                    RegisterRole.landlord,
+                    'Chủ trọ',
+                    Icons.home_work_outlined,
+                  ),
+                  const SizedBox(width: 10),
+                  _roleButton(
+                    RegisterRole.tenant,
+                    'Người thuê',
+                    Icons.person_outline_rounded,
+                  ),
+                ],
+              ),
+              if (selectedRole != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    selectedRole == RegisterRole.landlord
+                        ? 'Tài khoản Chủ trọ có quyền quản lý phòng, hợp đồng, hóa đơn và khách thuê.'
+                        : 'Nhập mã mời 6 ký tự từ chủ trọ để tự động vào đúng phòng ngay khi tạo tài khoản.',
+                    style: const TextStyle(
+                      color: Color(0xFF475569),
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ),
+              if (roleError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, left: 4),
+                  child: Text(
+                    roleError!,
+                    style: const TextStyle(
+                      color: Color(0xFFB60F0F),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              if (selectedRole == RegisterRole.tenant) ...[
+                const SizedBox(height: 14),
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'Mã mời vào phòng (tùy chọn)',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextFormField(
+                  controller: inviteCode,
+                  textCapitalization: TextCapitalization.characters,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    color: ink,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  decoration: _boxInput().copyWith(
+                    hintText: 'VD: A7K92P (có thể nhập sau khi đăng nhập)',
+                    hintStyle: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 12.5,
+                      letterSpacing: 0,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  onChanged: (_) => setState(() => inviteAuthError = null),
+                  validator: (v) {
+                    if (inviteAuthError != null) return inviteAuthError;
+                    final cleaned = (v ?? '')
+                        .trim()
+                        .toUpperCase()
+                        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+                    if (cleaned.isEmpty) return null;
+                    if (cleaned.length != 6) {
+                      return 'Mã mời gồm đúng 6 ký tự chữ và số';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+              const SizedBox(height: 14),
               _fieldLabel('Họ và tên'),
               TextFormField(
                 controller: name,
@@ -168,6 +432,16 @@ class _RegisterPageState extends State<RegisterPage> {
                 validator: (v) => (v == null || v.trim().isEmpty)
                     ? 'Vui lòng nhập họ và tên'
                     : null,
+              ),
+              const SizedBox(height: 14),
+              _fieldLabel('Số điện thoại'),
+              TextFormField(
+                controller: phone,
+                keyboardType: TextInputType.phone,
+                style: const TextStyle(fontSize: 13.5, color: ink),
+                decoration: _boxInput(),
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                validator: (v) => validateVietnamesePhone(v),
               ),
               const SizedBox(height: 14),
               _fieldLabel('Email'),

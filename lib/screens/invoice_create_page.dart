@@ -74,10 +74,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
       message(context, 'Vui lòng chọn phòng cần tạo hóa đơn');
       return;
     }
-    if (!await confirm(
-      context,
-      'Phát hành hóa đơn cho kỳ $period?',
-    )) {
+    if (!await confirm(context, 'Phát hành hóa đơn cho kỳ $period?')) {
       return;
     }
     if (!mounted) return;
@@ -122,11 +119,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
       titleSpacing: 0,
       title: const Text(
         'Tạo hóa đơn',
-        style: TextStyle(
-          color: ink,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w600),
       ),
     ),
     body: RecordsView(
@@ -384,7 +377,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                   const SizedBox(height: 12),
                   if (roomId == null)
                     const Text(
-                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch vụ từ dữ liệu Firebase. Nếu hóa đơn trước đó đã bị hủy hoặc xóa, bạn vẫn có thể tạo lại hóa đơn mới cho cùng kỳ.',
+                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch. Nếu hóa đơn trước đó đã bị hủy hoặc xóa, bạn vẫn có thể tạo lại hóa đơn mới cho cùng kỳ.',
                       style: TextStyle(color: muted, fontSize: 12),
                     )
                   else if (loadingPreview)
@@ -512,7 +505,10 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                   ),
                   style: const TextStyle(color: ink, fontSize: 12.5),
                   items: const [
-                    DropdownMenuItem(value: 'bank', child: Text('Chuyển khoản')),
+                    DropdownMenuItem(
+                      value: 'bank',
+                      child: Text('Chuyển khoản'),
+                    ),
                     DropdownMenuItem(value: 'cash', child: Text('Tiền mặt')),
                   ],
                   onChanged: (v) {

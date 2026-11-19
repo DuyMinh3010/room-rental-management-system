@@ -15,6 +15,8 @@ const canvas = Color(0xFFF7F8FA);
 const line = Color(0xFFE5E7EB);
 
 final store = AppStore.instance;
+final authTransitioning = ValueNotifier<bool>(false);
+final preferredLandlordMode = ValueNotifier<bool?>(null);
 
 void message(BuildContext context, String text) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -197,7 +199,9 @@ Widget statusPill(String value, {String? customText}) {
   } else if (normalized.contains('void') ||
       normalized.contains('cancel') ||
       normalized.contains('expired') ||
-      value == 'Sắp hết hạn') {
+      normalized.contains('overdue') ||
+      value == 'Sắp hết hạn' ||
+      value == 'Quá hạn') {
     foreground = const Color(0xFFC7070E);
     background = const Color(0xFFFDECEC);
   } else {

@@ -6,7 +6,8 @@ import '../widgets/common.dart';
 import 'notification_page.dart';
 
 class AccountPage extends StatelessWidget {
-  const AccountPage({super.key});
+  final VoidCallback? onSwitchToTenant;
+  const AccountPage({super.key, this.onSwitchToTenant});
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -156,7 +157,68 @@ class AccountPage extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+
+            if (onSwitchToTenant != null) ...[
+              Container(
+                decoration: BoxDecoration(
+                  color: softBlue,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: blue.withValues(alpha: 0.28),
+                    width: 0.9,
+                  ),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: onSwitchToTenant,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 19,
+                          backgroundColor: Colors.white,
+                          child: Icon(
+                            Icons.swap_horiz_rounded,
+                            color: blue,
+                            size: 20,
+                          ),
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Chuyển sang chế độ Người thuê',
+                                style: TextStyle(
+                                  color: blue,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Xem thông tin phòng, hợp đồng và hóa đơn bạn đang thuê',
+                                style: TextStyle(color: muted, fontSize: 11.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(width: 6),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: blue,
+                          size: 22,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Grouped menu rows (Frame 6)
             Container(
@@ -212,11 +274,11 @@ class AccountPage extends StatelessWidget {
                         if (context.mounted) {
                           message(
                             context,
-                            'Mới: ${result['created']} · Đã có: ${result['existing']} · Chưa đủ dữ liệu: ${result['blocked']} · Nhắc quá hạn: ${result['late']}',
+                            'Mới: ${result['created']} · Đã có: ${result['existing']} · Nhắc quá hạn: ${result['late']}${result['blocked'] > 0 ? ' · Chưa đủ dữ liệu: ${result['blocked']}' : ''}',
                           );
                         }
                       },
-                      'Đã chạy kiểm tra; xem mục Thông báo để biết phòng thiếu dữ liệu',
+                      'Đã kiểm tra hóa đơn và thông báo quá hạn',
                     ),
                   ),
                   _AccountMenuRow(
@@ -234,6 +296,7 @@ class AccountPage extends StatelessWidget {
                     danger: true,
                     showDivider: false,
                     onTap: () async {
+                      preferredLandlordMode.value = null;
                       await FirebaseAuth.instance.signOut();
                     },
                   ),
@@ -341,7 +404,7 @@ class _SettingsPageState extends State<SettingsPage> {
       collection: 'settings',
       builder: (_, all) {
         final settings = all.where((r) => r.id == store.uid).firstOrNull;
-        final enabled = auto ?? settings?.data['autoBilling'] == true;
+        final enabled = auto ?? (settings?.data['autoBilling'] ?? true);
         return Column(
           children: [
             Container(
