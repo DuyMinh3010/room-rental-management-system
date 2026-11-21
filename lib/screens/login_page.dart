@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../services/google_auth_service.dart';
 import '../utils/validators.dart';
 import '../widgets/common.dart';
 import 'register_page.dart';
@@ -17,7 +18,7 @@ class _LoginPageState extends State<LoginPage> {
   final formKey = GlobalKey<FormState>();
   final emailFieldKey = GlobalKey<FormFieldState<String>>();
   final email = TextEditingController(), password = TextEditingController();
-  bool busy = false, hidden = true;
+  bool busy = false, googleBusy = false, hidden = true;
   _LoginRole? selectedRole;
   String? emailAuthError, passwordAuthError;
   String? roleAuthError;
@@ -104,6 +105,127 @@ class _LoginPageState extends State<LoginPage> {
     } finally {
       authTransitioning.value = false;
       if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _loginWithGoogle() async {
+    if (busy) return;
+    if (selectedRole == null) {
+      setState(() => roleAuthError = 'Vui lòng chọn Chủ trọ hoặc Người thuê');
+      return;
+    }
+    setState(() {
+      emailAuthError = null;
+      passwordAuthError = null;
+      roleAuthError = null;
+      busy = true;
+      googleBusy = true;
+    });
+    authTransitioning.value = true;
+    try {
+      final credential = await GoogleAuthService.signInWithGoogle();
+      if (credential == null) return;
+      final user = credential.user;
+      if (user == null) {
+        throw StateError('Firebase không trả về tài khoản Google vừa đăng nhập');
+      }
+      DocumentSnapshot<Map<String, dynamic>> manager;
+      try {
+        manager = await FirebaseFirestore.instance
+            .collection('managers')
+            .doc(user.uid)
+            .get();
+      } catch (_) {
+        await GoogleAuthService.signOut();
+        rethrow;
+      }
+
+      final isLandlord = manager.data()?['enabled'] == true;
+      final wantsLandlord = selectedRole == _LoginRole.landlord;
+
+      if (wantsLandlord && !isLandlord) {
+        if (!mounted) {
+          await GoogleAuthService.signOut();
+          return;
+        }
+        final normalizedEmail = (user.email ?? '').trim().toLowerCase();
+        final defaultName = user.displayName?.trim().isNotEmpty == true
+            ? user.displayName!.trim()
+            : normalizedEmail.contains('@')
+            ? normalizedEmail.substring(0, normalizedEmail.indexOf('@'))
+            : 'Chủ trọ';
+
+        final submitted = await showDialog<Map<String, String>>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _GoogleLandlordSetupDialog(
+            email: normalizedEmail,
+            defaultName: defaultName,
+          ),
+        );
+        if (submitted == null) {
+          await GoogleAuthService.signOut();
+          return;
+        }
+        try {
+          final ownerName = submitted['name']!;
+          final phone = submitted['phone'] ?? '';
+          final address = submitted['address'] ?? '';
+          await FirebaseFirestore.instance
+              .collection('managers')
+              .doc(user.uid)
+              .set({
+                'enabled': true,
+                'role': 'landlord',
+                'name': ownerName,
+                'email': normalizedEmail,
+                if (phone.isNotEmpty) 'phone': phone,
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+          try {
+            await FirebaseFirestore.instance
+                .collection('settings')
+                .doc(user.uid)
+                .set({
+                  'ownerId': user.uid,
+                  'name': ownerName,
+                  if (phone.isNotEmpty) 'phone': phone,
+                  if (address.isNotEmpty) 'address': address,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                }, SetOptions(merge: true));
+          } catch (_) {
+            // Không chặn đăng nhập nếu settings ghi sau.
+          }
+        } catch (e) {
+          await GoogleAuthService.signOut();
+          rethrow;
+        }
+      }
+
+      preferredLandlordMode.value = wantsLandlord;
+    } catch (e) {
+      if (!mounted) return;
+      final text = e is FirebaseAuthException
+          ? switch (e.code) {
+              'account-exists-with-different-credential' =>
+                'Email này đã được đăng ký bằng Email/Mật khẩu. Hãy đăng nhập bằng mật khẩu.',
+              'user-disabled' => 'Tài khoản này đã bị vô hiệu hóa',
+              'operation-not-allowed' =>
+                'Đăng nhập Google chưa được bật trên Firebase Authentication',
+              'network-request-failed' =>
+                'Lỗi kết nối mạng. Vui lòng kiểm tra Internet và thử lại',
+              _ => errorText(e),
+            }
+          : errorText(e);
+      message(context, text);
+    } finally {
+      authTransitioning.value = false;
+      if (mounted) {
+        setState(() {
+          busy = false;
+          googleBusy = false;
+        });
+      }
     }
   }
 
@@ -218,7 +340,17 @@ class _LoginPageState extends State<LoginPage> {
             children: [
               Container(
                 width: double.infinity,
-                color: const Color(0xFF4285F4),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0xFFFF8A4C),
+                      Color(0xFFF26522),
+                      Color(0xFFF5A94C),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
                 child: SafeArea(
                   bottom: false,
                   child: Padding(
@@ -266,7 +398,7 @@ class _LoginPageState extends State<LoginPage> {
                         const Text(
                           'Quản lý phòng trọ dễ dàng hơn',
                           style: TextStyle(
-                            color: Color(0xFFDBEAFE),
+                            color: Color(0xFFFFF4EC),
                             fontSize: 14,
                           ),
                         ),
@@ -420,7 +552,9 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ),
                           child: Text(
-                            busy ? 'Đang đăng nhập...' : 'Đăng nhập',
+                            busy && !googleBusy
+                                ? 'Đang đăng nhập...'
+                                : 'Đăng nhập',
                             style: const TextStyle(
                               fontSize: 13.5,
                               fontWeight: FontWeight.w600,
@@ -432,23 +566,69 @@ class _LoginPageState extends State<LoginPage> {
                       SizedBox(
                         height: 46,
                         child: OutlinedButton(
-                          onPressed: () =>
-                              openPage(context, const GoogleSignInSheetPage()),
+                          onPressed: busy ? null : _loginWithGoogle,
                           style: OutlinedButton.styleFrom(
                             backgroundColor: Colors.white,
-                            foregroundColor: blue,
-                            side: const BorderSide(color: Color(0xFFBFDBFE)),
+                            foregroundColor: ink,
+                            side: const BorderSide(color: Color(0xFFFAD4BE)),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
                             ),
                           ),
-                          child: const Text(
-                            'G  Đăng nhập bằng Google',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          child: googleBusy
+                              ? const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: blue,
+                                      ),
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text(
+                                      'Đang đăng nhập với Google...',
+                                      style: TextStyle(
+                                        color: blue,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 22,
+                                      height: 22,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: softBlue,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Text(
+                                        'G',
+                                        style: TextStyle(
+                                          color: blue,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Text(
+                                      'Đăng nhập bằng Google',
+                                      style: TextStyle(
+                                        color: blue,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                         ),
                       ),
                       const SizedBox(height: 14),
@@ -467,7 +647,7 @@ class _LoginPageState extends State<LoginPage> {
                                     builder: (_) => const RegisterPage(),
                                   ),
                                 );
-                            if (result == null || !mounted) return;
+                            if (result == null || !context.mounted) return;
                             setState(() {
                               selectedRole =
                                   result.role == RegisterRole.landlord
@@ -501,7 +681,7 @@ class _LoginPageState extends State<LoginPage> {
                                 TextSpan(
                                   text: 'Đăng ký',
                                   style: TextStyle(
-                                    color: Color(0xFF3787EB),
+                                    color: blue,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -522,106 +702,111 @@ class _LoginPageState extends State<LoginPage> {
   );
 }
 
-class GoogleSignInSheetPage extends StatelessWidget {
-  const GoogleSignInSheetPage({super.key});
+class _GoogleLandlordSetupDialog extends StatefulWidget {
+  final String email;
+  final String defaultName;
+
+  const _GoogleLandlordSetupDialog({
+    required this.email,
+    required this.defaultName,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: canvas,
-      appBar: AppBar(
-        backgroundColor: canvas,
-        leading: IconButton(
-          icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('Đăng nhập với Google'),
-      ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 374),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: line),
+  State<_GoogleLandlordSetupDialog> createState() =>
+      _GoogleLandlordSetupDialogState();
+}
+
+class _GoogleLandlordSetupDialogState
+    extends State<_GoogleLandlordSetupDialog> {
+  final formKey = GlobalKey<FormState>();
+  late final TextEditingController nameController;
+  final phoneController = TextEditingController();
+  final addressController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    nameController = TextEditingController(text: widget.defaultName);
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    phoneController.dispose();
+    addressController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    backgroundColor: Colors.white,
+    surfaceTintColor: Colors.transparent,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    title: const Text(
+      'Tạo hồ sơ Chủ trọ',
+      style: TextStyle(color: ink, fontSize: 17, fontWeight: FontWeight.w700),
+    ),
+    content: SingleChildScrollView(
+      child: Form(
+        key: formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Tài khoản Google ${widget.email} chưa đăng ký làm Chủ trọ. Nhập thông tin cơ bản để kích hoạt ngay:',
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Họ tên chủ trọ *'),
+              validator: (v) => (v == null || v.trim().isEmpty)
+                  ? 'Vui lòng nhập họ tên chủ trọ'
+                  : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Số điện thoại liên hệ (tùy chọn)',
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(36),
-                    child: Image.asset(
-                      'assets/images/rrms_logo.png',
-                      width: 72,
-                      height: 72,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Chọn một tài khoản',
-                    style: TextStyle(
-                      color: Color(0xFF202124),
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'để tiếp tục tới RRMS',
-                    style: TextStyle(color: muted, fontSize: 13),
-                  ),
-                  const SizedBox(height: 22),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 6),
-                    leading: initialAvatar('R', size: 36),
-                    title: const Text(
-                      'Sử dụng tài khoản Email / Mật khẩu',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: const Text(
-                      'Quay lại đăng nhập bằng tài khoản Firebase Auth',
-                      style: TextStyle(fontSize: 11.5, color: muted),
-                    ),
-                    onTap: () => Navigator.pop(context),
-                  ),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Text(
-                        'Tiếng Việt',
-                        style: TextStyle(
-                          color: Color(0xFF202124),
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      const Icon(
-                        Icons.arrow_drop_down,
-                        size: 18,
-                        color: Color(0xFF444444),
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Đóng'),
-                      ),
-                    ],
-                  ),
-                ],
+              validator: (v) => validateVietnamesePhone(v, required: false),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: addressController,
+              decoration: const InputDecoration(
+                labelText: 'Địa chỉ nhà trọ (tùy chọn)',
               ),
             ),
-          ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Hủy'),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (!formKey.currentState!.validate()) return;
+          Navigator.pop(context, {
+            'name': nameController.text.trim(),
+            'phone': phoneController.text.trim(),
+            'address': addressController.text.trim(),
+          });
+        },
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(96, 40),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        child: const Text('Kích hoạt'),
+      ),
+    ],
+  );
 }

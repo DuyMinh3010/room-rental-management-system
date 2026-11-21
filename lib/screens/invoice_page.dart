@@ -143,7 +143,11 @@ class _InvoicePageState extends State<InvoicePage> {
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
-                    colors: [Color(0xFF2563EB), Color(0xFF3B82F6)],
+                    colors: [
+                      Color(0xFFFF8A4C),
+                      Color(0xFFF26522),
+                      Color(0xFFF5A94C),
+                    ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -155,7 +159,7 @@ class _InvoicePageState extends State<InvoicePage> {
                     const Text(
                       'Tổng cần thu',
                       style: TextStyle(
-                        color: Color(0xFFDCE8FF),
+                        color: Color(0xFFFFF4EC),
                         fontSize: 12.5,
                         fontWeight: FontWeight.w500,
                       ),
@@ -173,7 +177,7 @@ class _InvoicePageState extends State<InvoicePage> {
                     Text(
                       '$paidCount đã thanh toán  •  $unpaidCount chưa thanh toán',
                       style: const TextStyle(
-                        color: Color(0xFFE0ECFF),
+                        color: Color(0xFFFFF4EC),
                         fontSize: 11.5,
                       ),
                     ),

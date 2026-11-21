@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 import 'screens/app_shell.dart';
 import 'screens/login_page.dart';
+import 'services/google_auth_service.dart';
 import 'widgets/common.dart';
 
 Future<void> main() async {
@@ -15,7 +16,7 @@ Future<void> main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    await FirebaseAuth.instance.signOut();
+    await GoogleAuthService.signOut();
 
     runApp(const MyApp());
   } catch (e) {
@@ -151,8 +152,8 @@ class MyApp extends StatelessWidget {
         ),
         chipTheme: ChipThemeData(
           backgroundColor: Colors.white,
-          selectedColor: const Color(0xFFEFF4FF),
-          disabledColor: const Color(0xFFF1F5F9),
+          selectedColor: softBlue,
+          disabledColor: const Color(0xFFF2EFEA),
           side: const BorderSide(color: line),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),

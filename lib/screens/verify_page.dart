@@ -74,7 +74,7 @@ class _VerifyPageState extends State<VerifyPage> {
     final target =
         widget.account['phone'] ?? widget.account['email'] ?? '+84 9xx xxx 123';
     return Scaffold(
-      backgroundColor: const Color(0xFFC8DCFF),
+      backgroundColor: const Color(0xFFFDEEE4),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),

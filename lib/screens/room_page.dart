@@ -180,7 +180,7 @@ class _RoomPageState extends State<RoomPage> {
                                       vertical: 8,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFEAF0F7),
+                                      color: const Color(0xFFEDE8DF),
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Column(

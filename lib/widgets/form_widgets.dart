@@ -135,7 +135,7 @@ class FormInput extends StatelessWidget {
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: const BorderSide(
-                  color: Color(0xFF2563EB),
+                  color: Color(0xFFF26522),
                   width: 1.4,
                 ),
               ),
@@ -189,14 +189,14 @@ InputDecoration formDecoration({String? hint, Widget? suffixIcon}) =>
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderSide: const BorderSide(color: Color(0xFFEBE7E2)),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderSide: const BorderSide(color: Color(0xFFEBE7E2)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF168BFF), width: 1.4),
+        borderSide: const BorderSide(color: Color(0xFFF26522), width: 1.4),
       ),
     );

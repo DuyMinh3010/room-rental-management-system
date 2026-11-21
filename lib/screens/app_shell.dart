@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/google_auth_service.dart';
 import '../widgets/common.dart';
 import 'room_page.dart';
 import 'tenant_list_page.dart';
@@ -151,7 +152,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 icon: const Icon(Icons.logout_rounded),
                 onPressed: () async {
                   preferredLandlordMode.value = null;
-                  await FirebaseAuth.instance.signOut();
+                  await GoogleAuthService.signOut();
                 },
               ),
             ],

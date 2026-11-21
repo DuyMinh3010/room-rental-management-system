@@ -7,12 +7,12 @@ import '../utils/validators.dart';
 
 export '../services/app_store.dart' show errorText;
 
-const blue = Color(0xFF2563EB);
-const softBlue = Color(0xFFEAF1FF);
-const ink = Color(0xFF111827);
-const muted = Color(0xFF64748B);
-const canvas = Color(0xFFF7F8FA);
-const line = Color(0xFFE5E7EB);
+const blue = Color(0xFFF26522);
+const softBlue = Color(0xFFFFF1E8);
+const ink = Color(0xFF1C1917);
+const muted = Color(0xFF73706B);
+const canvas = Color(0xFFF8F7F5);
+const line = Color(0xFFEBE7E2);
 
 final store = AppStore.instance;
 final authTransitioning = ValueNotifier<bool>(false);
@@ -195,7 +195,7 @@ Widget statusPill(String value, {String? customText}) {
       value == 'Đã thanh lý' ||
       value == 'Đã kết thúc') {
     foreground = ink;
-    background = const Color(0xFFBDCCE9);
+    background = const Color(0xFFE7E2D8);
   } else if (normalized.contains('void') ||
       normalized.contains('cancel') ||
       normalized.contains('expired') ||
@@ -273,8 +273,8 @@ Widget initialAvatar(
   final lower = name.toLowerCase();
   if (lower.contains('điện') || lower.contains('dien')) {
     return (
-      color: const Color(0xFF2563EB),
-      softBg: const Color(0xFFEAF1FF),
+      color: const Color(0xFFD97706),
+      softBg: const Color(0xFFFEF3C7),
       symbol: 'ϟ',
       icon: Icons.bolt_rounded,
     );
@@ -317,15 +317,15 @@ Widget initialAvatar(
   }
   if (mode == 'meter') {
     return (
-      color: const Color(0xFF2563EB),
-      softBg: const Color(0xFFEAF1FF),
+      color: blue,
+      softBg: softBlue,
       symbol: 'ϟ',
       icon: Icons.speed_rounded,
     );
   }
   return (
-    color: const Color(0xFF2563EB),
-    softBg: const Color(0xFFEAF1FF),
+    color: blue,
+    softBg: softBlue,
     symbol: name.trim().isEmpty ? 'DV' : name.trim()[0].toUpperCase(),
     icon: Icons.miscellaneous_services_rounded,
   );
