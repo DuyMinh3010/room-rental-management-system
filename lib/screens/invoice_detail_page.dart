@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/record.dart';
-import '../services/billing.dart';
 import '../services/document_service.dart';
 import '../widgets/common.dart';
 import 'contract_detail_page.dart';
@@ -13,6 +12,7 @@ import 'tenant_detail_page.dart';
 class InvoiceDetailPage extends StatelessWidget {
   final String invoiceId;
   final bool landlord;
+
   const InvoiceDetailPage({
     super.key,
     required this.invoiceId,
@@ -21,12 +21,15 @@ class InvoiceDetailPage extends StatelessWidget {
 
   Future<String?> _input(BuildContext context, String title) async {
     final c = TextEditingController();
+
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
         title: Text(
           title,
           style: const TextStyle(
@@ -59,16 +62,22 @@ class InvoiceDetailPage extends StatelessWidget {
         ],
       ),
     );
+
     c.dispose();
     return result;
   }
 
-  Future<void> _showShareOptions(BuildContext context, Record bill) async {
+  Future<void> _showShareOptions(
+    BuildContext context,
+    Record bill,
+  ) async {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(20),
+        ),
       ),
       builder: (ctx) => SafeArea(
         child: Padding(
@@ -95,7 +104,10 @@ class InvoiceDetailPage extends StatelessWidget {
                     color: softBlue,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.picture_as_pdf_outlined, color: blue),
+                  child: const Icon(
+                    Icons.picture_as_pdf_outlined,
+                    color: blue,
+                  ),
                 ),
                 title: const Text(
                   'Chia sẻ file PDF hóa đơn',
@@ -107,13 +119,20 @@ class InvoiceDetailPage extends StatelessWidget {
                 ),
                 subtitle: const Text(
                   'Gửi PDF qua Zalo, Messenger, Email hoặc lưu về máy',
-                  style: TextStyle(color: muted, fontSize: 12),
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 12,
+                  ),
                 ),
                 onTap: () async {
                   Navigator.pop(ctx);
+
                   await perform(
                     context,
-                    () => DocumentService.shareRecord(bill, contract: false),
+                    () => DocumentService.shareRecord(
+                      bill,
+                      contract: false,
+                    ),
                     'Đã mở hộp thoại chia sẻ PDF',
                   );
                 },
@@ -143,15 +162,20 @@ class InvoiceDetailPage extends StatelessWidget {
                 ),
                 subtitle: const Text(
                   'Copy chi tiết hóa đơn dạng văn bản để dán gửi nhanh',
-                  style: TextStyle(color: muted, fontSize: 12),
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 12,
+                  ),
                 ),
                 onTap: () async {
                   Navigator.pop(ctx);
+
                   await Clipboard.setData(
                     ClipboardData(
                       text: DocumentService.formatInvoiceText(bill),
                     ),
                   );
+
                   if (context.mounted) {
                     message(
                       context,
@@ -174,13 +198,16 @@ class InvoiceDetailPage extends StatelessWidget {
   }) async {
     String method = 'bank';
     bool collectDeposit = bill.data['collectDeposit'] == true;
+
     final defaultDep =
         bill.number('depositCollectedAmount') ??
         bill.number('deposit') ??
         suggestedDeposit;
+
     final depCtrl = TextEditingController(
       text: defaultDep > 0 ? '${defaultDep.round()}' : '0',
     );
+
     final noteCtrl = TextEditingController(
       text: bill.text('invoiceNote', bill.text('paymentNote')),
     );
@@ -235,10 +262,15 @@ class InvoiceDetailPage extends StatelessWidget {
                       value: 'bank',
                       child: Text('Chuyển khoản'),
                     ),
-                    DropdownMenuItem(value: 'cash', child: Text('Tiền mặt')),
+                    DropdownMenuItem(
+                      value: 'cash',
+                      child: Text('Tiền mặt'),
+                    ),
                   ],
-                  onChanged: (v) {
-                    if (v != null) setDialogState(() => method = v);
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => method = value);
+                    }
                   },
                 ),
                 const SizedBox(height: 12),
@@ -256,10 +288,16 @@ class InvoiceDetailPage extends StatelessWidget {
                   ),
                   subtitle: const Text(
                     'Đánh dấu đã thu tiền đặt cọc kèm hóa đơn này',
-                    style: TextStyle(color: muted, fontSize: 11.5),
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 11.5,
+                    ),
                   ),
-                  onChanged: (v) =>
-                      setDialogState(() => collectDeposit = v == true),
+                  onChanged: (value) {
+                    setDialogState(
+                      () => collectDeposit = value == true,
+                    );
+                  },
                 ),
                 if (collectDeposit) ...[
                   const SizedBox(height: 4),
@@ -322,7 +360,9 @@ class InvoiceDetailPage extends StatelessWidget {
           depCtrl.text.trim().replaceAll('.', '').replaceAll(',', ''),
         ) ??
         0;
+
     final noteText = noteCtrl.text.trim();
+
     depCtrl.dispose();
     noteCtrl.dispose();
 
@@ -350,13 +390,16 @@ class InvoiceDetailPage extends StatelessWidget {
     num suggestedDeposit = 0,
   }) async {
     bool collectDeposit = bill.data['collectDeposit'] == true;
+
     final defaultDep =
         bill.number('depositCollectedAmount') ??
         bill.number('deposit') ??
         suggestedDeposit;
+
     final depCtrl = TextEditingController(
       text: defaultDep > 0 ? '${defaultDep.round()}' : '0',
     );
+
     final noteCtrl = TextEditingController(
       text: bill.text('invoiceNote', bill.text('paymentNote')),
     );
@@ -397,10 +440,16 @@ class InvoiceDetailPage extends StatelessWidget {
                   ),
                   subtitle: const Text(
                     'Xác nhận đã thu tiền cọc cho hóa đơn này',
-                    style: TextStyle(color: muted, fontSize: 11.5),
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 11.5,
+                    ),
                   ),
-                  onChanged: (v) =>
-                      setDialogState(() => collectDeposit = v == true),
+                  onChanged: (value) {
+                    setDialogState(
+                      () => collectDeposit = value == true,
+                    );
+                  },
                 ),
                 if (collectDeposit) ...[
                   const SizedBox(height: 6),
@@ -463,7 +512,9 @@ class InvoiceDetailPage extends StatelessWidget {
           depCtrl.text.trim().replaceAll('.', '').replaceAll(',', ''),
         ) ??
         0;
+
     final noteText = noteCtrl.text.trim();
+
     depCtrl.dispose();
     noteCtrl.dispose();
 
@@ -496,38 +547,46 @@ class InvoiceDetailPage extends StatelessWidget {
           final bank = bill.data['bank'] is Map
               ? bill.data['bank'] as Map
               : const {};
+
           final lines = bill.data['lines'] as List? ?? [];
           final status = bill.text('status');
+
           final canLandlordConfirm =
               landlord && ['unpaid', 'reported'].contains(status);
+
           final canTenantReport = !landlord && status == 'unpaid';
 
           final linkedTenant = tenants
               .where((t) => t.id == bill.text('tenantId'))
               .firstOrNull;
+
           final linkedContract = contracts
               .where((c) => c.id == bill.text('contractId'))
               .firstOrNull;
+
           final tenantName =
               linkedTenant?.name ?? bill.text('tenantName', 'Chưa cập nhật');
+
           final tenantPhone =
               linkedTenant?.text('phone') ?? bill.text('tenantPhone');
+
           final tenantIdentity =
               linkedTenant?.text('identity') ?? bill.text('tenantIdentity');
-          final suggestedDeposit =
-              bill.number('deposit') ?? linkedContract?.number('deposit') ?? 0;
 
-          final paidDateTimeText = bill.text('paidDateTime').isNotEmpty
-              ? bill.text('paidDateTime')
-              : formatDateTimeVi(
-                  bill.time('paidAt'),
-                  bill.text('paidDate').isNotEmpty
-                      ? '${bill.text('paidDate')} 00:00'
-                      : '',
-                );
+          final suggestedDeposit =
+              bill.number('deposit') ??
+              linkedContract?.number('deposit') ??
+              0;
+
+          // Ưu tiên paidAt từ Firebase và định dạng theo giờ Việt Nam.
+          // Hóa đơn cũ thiếu giờ không tự thêm 00:00.
+          final paidDateTimeText = invoicePaidTimeText(bill);
+
           final collectDeposit = bill.data['collectDeposit'] == true;
+
           final depositCollectedAmount =
               bill.number('depositCollectedAmount') ?? 0;
+
           final invoiceNote = bill
               .text('invoiceNote', bill.text('paymentNote'))
               .trim();
@@ -556,16 +615,27 @@ class InvoiceDetailPage extends StatelessWidget {
               actions: [
                 IconButton(
                   tooltip: 'In / xuất PDF hóa đơn',
-                  icon: const Icon(Icons.print_outlined, color: ink, size: 22),
+                  icon: const Icon(
+                    Icons.print_outlined,
+                    color: ink,
+                    size: 22,
+                  ),
                   onPressed: () => perform(
                     context,
-                    () => DocumentService.printRecord(bill, contract: false),
+                    () => DocumentService.printRecord(
+                      bill,
+                      contract: false,
+                    ),
                     'Đã mở bản in',
                   ),
                 ),
                 IconButton(
                   tooltip: 'Chia sẻ hóa đơn',
-                  icon: const Icon(Icons.share_outlined, color: blue, size: 21),
+                  icon: const Icon(
+                    Icons.share_outlined,
+                    color: blue,
+                    size: 21,
+                  ),
                   onPressed: () => _showShareOptions(context, bill),
                 ),
                 if (landlord)
@@ -589,6 +659,7 @@ class InvoiceDetailPage extends StatelessWidget {
                               context,
                               'Ghi rõ lý do hủy hóa đơn',
                             );
+
                             if (reason != null &&
                                 reason.isNotEmpty &&
                                 context.mounted) {
@@ -620,7 +691,10 @@ class InvoiceDetailPage extends StatelessWidget {
                           ),
                           'Đã xóa hóa đơn',
                         );
-                        if (context.mounted) Navigator.pop(context);
+
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                        }
                       }
                     },
                   ),
@@ -630,7 +704,6 @@ class InvoiceDetailPage extends StatelessWidget {
             body: ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
-                // Card 1: Summary Card
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -679,15 +752,11 @@ class InvoiceDetailPage extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          if (['unpaid', 'reported'].contains(status) &&
-                              Billing.late(bill.data, Billing.today())) ...[
-                            statusPill('overdue', customText: 'Quá hạn'),
-                            const SizedBox(width: 4),
-                          ],
                           statusPill(status),
                         ],
                       ),
-                      if (status == 'paid' && paidDateTimeText.isNotEmpty) ...[
+                      if (status == 'paid' &&
+                          paidDateTimeText.isNotEmpty) ...[
                         const SizedBox(height: 12),
                         Container(
                           width: double.infinity,
@@ -698,7 +767,9 @@ class InvoiceDetailPage extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: const Color(0xFFECFDF3),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFF86EFAC)),
+                            border: Border.all(
+                              color: const Color(0xFF86EFAC),
+                            ),
                           ),
                           child: Row(
                             children: [
@@ -721,52 +792,22 @@ class InvoiceDetailPage extends StatelessWidget {
                             ],
                           ),
                         ),
-                      ] else if (['unpaid', 'reported'].contains(status) &&
-                          Billing.late(bill.data, Billing.today())) ...[
-                        const SizedBox(height: 12),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 9,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEE2E2),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFFCA5A5)),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.warning_amber_rounded,
-                                size: 18,
-                                color: Color(0xFFDC2626),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Hóa đơn đã quá hạn thanh toán từ ngày ${bill.text('dueDate')}',
-                                  style: const TextStyle(
-                                    color: Color(0xFFDC2626),
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
                       ],
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 14),
-                        child: Divider(height: 1, color: line),
+                        child: Divider(
+                          height: 1,
+                          color: line,
+                        ),
                       ),
                       InkWell(
                         onTap: linkedTenant == null
                             ? null
                             : () => openPage(
                                 context,
-                                TenantDetailPage(tenantId: linkedTenant.id),
+                                TenantDetailPage(
+                                  tenantId: linkedTenant.id,
+                                ),
                               ),
                         child: Row(
                           children: [
@@ -869,7 +910,6 @@ class InvoiceDetailPage extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 14),
-                      // Khu vực nút In & Chia sẻ nằm cạnh nhau
                       Row(
                         children: [
                           Expanded(
@@ -889,14 +929,20 @@ class InvoiceDetailPage extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              icon: const Icon(Icons.print_outlined, size: 18),
+                              icon: const Icon(
+                                Icons.print_outlined,
+                                size: 18,
+                              ),
                               label: const Text('In hóa đơn'),
                             ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: FilledButton.icon(
-                              onPressed: () => _showShareOptions(context, bill),
+                              onPressed: () => _showShareOptions(
+                                context,
+                                bill,
+                              ),
                               style: FilledButton.styleFrom(
                                 backgroundColor: softBlue,
                                 foregroundColor: blue,
@@ -904,7 +950,10 @@ class InvoiceDetailPage extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              icon: const Icon(Icons.share_outlined, size: 18),
+                              icon: const Icon(
+                                Icons.share_outlined,
+                                size: 18,
+                              ),
                               label: const Text('Chia sẻ'),
                             ),
                           ),
@@ -914,8 +963,6 @@ class InvoiceDetailPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                // Card 2: Breakdown Card
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -937,7 +984,9 @@ class InvoiceDetailPage extends StatelessWidget {
                       const SizedBox(height: 14),
                       for (final row in lines)
                         Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 6,
+                          ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -966,7 +1015,10 @@ class InvoiceDetailPage extends StatelessWidget {
                         ),
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Divider(height: 1, color: line),
+                        child: Divider(
+                          height: 1,
+                          color: line,
+                        ),
                       ),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -993,8 +1045,6 @@ class InvoiceDetailPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                // Card 3: Thu tiền cọc & Ghi chú hóa đơn (Hiển thị và cho phép cập nhật cả trước và sau thanh toán)
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -1042,14 +1092,14 @@ class InvoiceDetailPage extends StatelessWidget {
                       ),
                       info(
                         'Ghi chú hóa đơn',
-                        invoiceNote.isEmpty ? 'Chưa có ghi chú' : invoiceNote,
+                        invoiceNote.isEmpty
+                            ? 'Chưa có ghi chú'
+                            : invoiceNote,
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                // Card 4: Payment Info Box (Đã bỏ hoàn toàn mã QR)
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -1075,7 +1125,8 @@ class InvoiceDetailPage extends StatelessWidget {
                             ? label(bill.text('method'))
                             : 'Chuyển khoản / Tiền mặt',
                       ),
-                      if (status == 'paid' && paidDateTimeText.isNotEmpty)
+                      if (status == 'paid' &&
+                          paidDateTimeText.isNotEmpty)
                         info(
                           'Ngày giờ thanh toán',
                           paidDateTimeText,
@@ -1085,12 +1136,27 @@ class InvoiceDetailPage extends StatelessWidget {
                           '${bank['name'] ?? ''}'.isNotEmpty) ...[
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 10),
-                          child: Divider(height: 1, color: line),
+                          child: Divider(
+                            height: 1,
+                            color: line,
+                          ),
                         ),
-                        info('Ngân hàng', '${bank['name'] ?? ''}'),
-                        info('Số tài khoản', '${bank['account'] ?? ''}'),
-                        info('Chủ tài khoản', '${bank['holder'] ?? ''}'),
-                        info('Nội dung CK', bill.text('code', bill.id)),
+                        info(
+                          'Ngân hàng',
+                          '${bank['name'] ?? ''}',
+                        ),
+                        info(
+                          'Số tài khoản',
+                          '${bank['account'] ?? ''}',
+                        ),
+                        info(
+                          'Chủ tài khoản',
+                          '${bank['holder'] ?? ''}',
+                        ),
+                        info(
+                          'Nội dung CK',
+                          bill.text('code', bill.id),
+                        ),
                       ],
                       const SizedBox(height: 6),
                       Center(
@@ -1099,9 +1165,14 @@ class InvoiceDetailPage extends StatelessWidget {
                             await Clipboard.setData(
                               ClipboardData(
                                 text:
-                                    '${bank['name'] ?? ''}\n${bank['account'] ?? ''}\n${bank['holder'] ?? ''}\n${money(bill.data['total'])}\n${bill.text('code', bill.id)}',
+                                    '${bank['name'] ?? ''}\n'
+                                    '${bank['account'] ?? ''}\n'
+                                    '${bank['holder'] ?? ''}\n'
+                                    '${money(bill.data['total'])}\n'
+                                    '${bill.text('code', bill.id)}',
                               ),
                             );
+
                             if (context.mounted) {
                               message(
                                 context,
@@ -1109,14 +1180,18 @@ class InvoiceDetailPage extends StatelessWidget {
                               );
                             }
                           },
-                          icon: const Icon(Icons.copy_rounded, size: 16),
-                          label: const Text('Sao chép thông tin chuyển khoản'),
+                          icon: const Icon(
+                            Icons.copy_rounded,
+                            size: 16,
+                          ),
+                          label: const Text(
+                            'Sao chép thông tin chuyển khoản',
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-
                 if (status == 'reported') ...[
                   const SizedBox(height: 14),
                   Container(
@@ -1124,7 +1199,9 @@ class InvoiceDetailPage extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFF4E5),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFFCD34D)),
+                      border: Border.all(
+                        color: const Color(0xFFFCD34D),
+                      ),
                     ),
                     child: Text(
                       'Người thuê đã báo chuyển tiền. Chủ trọ vui lòng kiểm tra giao dịch.\n${bill.text('paymentNote')}',
@@ -1135,7 +1212,6 @@ class InvoiceDetailPage extends StatelessWidget {
                     ),
                   ),
                 ],
-
                 if (status == 'void') ...[
                   const SizedBox(height: 14),
                   Container(
@@ -1145,7 +1221,8 @@ class InvoiceDetailPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(
-                      'Hóa đơn đã hủy. Lý do: ${bill.text('voidReason')}\n(Bạn có thể tạo lại hóa đơn mới cho phòng này trong cùng kỳ)',
+                      'Hóa đơn đã hủy. Lý do: ${bill.text('voidReason')}\n'
+                      '(Bạn có thể tạo lại hóa đơn mới cho phòng này trong cùng kỳ)',
                       style: const TextStyle(
                         color: Color(0xFFDC2626),
                         fontSize: 12.5,
@@ -1154,7 +1231,6 @@ class InvoiceDetailPage extends StatelessWidget {
                     ),
                   ),
                 ],
-
                 if (landlord) ...[
                   const SizedBox(height: 14),
                   Container(
@@ -1178,8 +1254,10 @@ class InvoiceDetailPage extends StatelessWidget {
                           OutlinedButton(
                             onPressed: () => perform(
                               context,
-                              () =>
-                                  store.command('resendInvoice', id: invoiceId),
+                              () => store.command(
+                                'resendInvoice',
+                                id: invoiceId,
+                              ),
                               'Đã gửi vào hộp thư người thuê',
                             ),
                             style: OutlinedButton.styleFrom(
@@ -1189,7 +1267,9 @@ class InvoiceDetailPage extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            child: const Text('Gửi hóa đơn cho người thuê'),
+                            child: const Text(
+                              'Gửi / gửi lại hóa đơn cho người thuê',
+                            ),
                           ),
                         ],
                       ],
@@ -1203,7 +1283,9 @@ class InvoiceDetailPage extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                     decoration: const BoxDecoration(
                       color: Colors.white,
-                      border: Border(top: BorderSide(color: line)),
+                      border: Border(
+                        top: BorderSide(color: line),
+                      ),
                     ),
                     child: SafeArea(
                       top: false,
@@ -1222,10 +1304,14 @@ class InvoiceDetailPage extends StatelessWidget {
                                 context,
                                 'Ghi chú giao dịch đã chuyển',
                               );
+
                               if (note != null && context.mounted) {
                                 await perform(
                                   context,
-                                  () => store.reportPayment(invoiceId, note),
+                                  () => store.reportPayment(
+                                    invoiceId,
+                                    note,
+                                  ),
                                   'Đã báo chủ trọ; đang chờ kiểm tra',
                                 );
                               }
@@ -1244,7 +1330,7 @@ class InvoiceDetailPage extends StatelessWidget {
                           ),
                           child: Text(
                             canLandlordConfirm
-                                ? 'Xác nhận đã thanh toán'
+                                ? 'Xác nhận đã thanh toán (kèm Cọc / Ghi chú)'
                                 : 'Tôi đã chuyển tiền – báo chủ trọ',
                           ),
                         ),
