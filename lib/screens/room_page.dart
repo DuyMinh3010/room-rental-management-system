@@ -105,6 +105,7 @@ class _RoomPageState extends State<RoomPage> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
               children: [
+                const ManagerInviteCodeBanner(compact: true),
                 TextField(
                   onChanged: (v) => setState(() => query = v),
                   decoration: searchDecoration('Tìm kiếm phòng...'),

@@ -51,6 +51,12 @@ class _TenantListPageState extends State<TenantListPage> {
         builder: (_, rooms) => RecordsView(
           collection: 'contracts',
           builder: (_, contracts) {
+            final day = todayVi();
+            final contractedRoomIds = contracts
+                .where((c) => isContractEffective(c, day))
+                .map((c) => c.text('roomId'))
+                .where((id) => id.isNotEmpty)
+                .toSet();
             final activeTenants = all.where((t) => !t.archived).toList();
             final leaderIds = contracts
                 .where(
@@ -304,27 +310,47 @@ class _TenantListPageState extends State<TenantListPage> {
                   ),
                   child: SafeArea(
                     top: false,
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: FilledButton.icon(
-                        onPressed: () =>
-                            openPage(context, const TenantEditPage()),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: blue,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (contractedRoomIds.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              'Chưa có phòng nào có hợp đồng hiệu lực. Hãy lập hợp đồng trước khi thêm người thuê.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Color(0xFFD97706),
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: FilledButton.icon(
+                            onPressed: contractedRoomIds.isEmpty
+                                ? null
+                                : () =>
+                                      openPage(context, const TenantEditPage()),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: blue,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            icon: const Icon(Icons.person_add_alt_1_rounded),
+                            label: const Text(
+                              'Thêm người',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
-                        icon: const Icon(Icons.person_add_alt_1_rounded),
-                        label: const Text(
-                          'Thêm người',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
+                      ],
                     ),
                   ),
                 ),

@@ -26,11 +26,19 @@ service cloud.firestore {
         && (request.resource.data.ownerId == request.auth.uid || request.resource.data.get('ownerId', '') == request.auth.uid);
     }
 
-    function tenantEmailMatches(data) {
+    function tenantAccountEmailMatches(data) {
       return signedIn()
-        && request.auth.token.email_verified == true
         && request.auth.token.email is string
-        && (data.email == request.auth.token.email || data.get('email', '') == request.auth.token.email);
+        && request.auth.token.email.size() > 0
+        && (data.email == request.auth.token.email
+          || data.email == request.auth.token.email.lower()
+          || data.get('email', '') == request.auth.token.email
+          || data.get('email', '') == request.auth.token.email.lower());
+    }
+
+    function tenantLinkedUidMatches(tenantData) {
+      return tenantData.get('userId', '') == request.auth.uid
+        || tenantData.get('authUid', '') == request.auth.uid;
     }
 
     function hasTenantSession() {
@@ -48,8 +56,9 @@ service cloud.firestore {
         && tenantMapping().ownerId is string
         && tenantMapping().roomId is string
         && exists(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId))
-        && get(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId)).data.authUid == request.auth.uid
+        && tenantLinkedUidMatches(get(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId)).data)
         && get(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId)).data.archived != true
+        && get(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId)).data.get('pendingRoomTransfer', false) != true
         && get(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId)).data.ownerId == tenantMapping().ownerId
         && get(/databases/$(database)/documents/tenants/$(tenantMapping().tenantId)).data.roomId == tenantMapping().roomId;
     }
@@ -78,38 +87,19 @@ service cloud.firestore {
         && data.roomId is string
         && (
           (existsAfter(tenantPath)
-            && getAfter(tenantPath).data.authUid == request.auth.uid
+            && tenantLinkedUidMatches(getAfter(tenantPath).data)
             && getAfter(tenantPath).data.archived != true
+            && getAfter(tenantPath).data.get('pendingRoomTransfer', false) != true
             && getAfter(tenantPath).data.ownerId == data.ownerId
             && getAfter(tenantPath).data.roomId == data.roomId)
           ||
           (exists(tenantPath)
-            && get(tenantPath).data.authUid == request.auth.uid
+            && tenantLinkedUidMatches(get(tenantPath).data)
             && get(tenantPath).data.archived != true
+            && get(tenantPath).data.get('pendingRoomTransfer', false) != true
             && get(tenantPath).data.ownerId == data.ownerId
             && get(tenantPath).data.roomId == data.roomId)
         );
-    }
-
-    function validInviteTenantCreate(data, tenantId) {
-      let code = data.get('inviteCode', '');
-      return signedIn()
-        && code is string
-        && code.size() == 6
-        && data.ownerId is string
-        && data.roomId is string
-        && data.roomId.size() > 0
-        && data.name is string
-        && data.name.size() > 0
-        && data.authUid == request.auth.uid
-        && data.archived != true
-        && exists(/databases/$(database)/documents/roomInvites/$(code))
-        && get(/databases/$(database)/documents/roomInvites/$(code)).data.status == 'active'
-        && get(/databases/$(database)/documents/roomInvites/$(code)).data.ownerId == data.ownerId
-        && get(/databases/$(database)/documents/roomInvites/$(code)).data.roomId == data.roomId
-        && getAfter(/databases/$(database)/documents/roomInvites/$(code)).data.status == 'used'
-        && getAfter(/databases/$(database)/documents/roomInvites/$(code)).data.usedByUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/roomInvites/$(code)).data.tenantId == tenantId;
     }
 
     function previousTenantEnded() {
@@ -120,12 +110,16 @@ service cloud.firestore {
           && (
             !exists(/databases/$(database)/documents/tenants/$(oldTenantId))
             || get(/databases/$(database)/documents/tenants/$(oldTenantId)).data.archived == true
-            || get(/databases/$(database)/documents/tenants/$(oldTenantId)).data.authUid != request.auth.uid
+            || get(/databases/$(database)/documents/tenants/$(oldTenantId)).data.get('roomId', '') == ''
+            || !tenantLinkedUidMatches(get(/databases/$(database)/documents/tenants/$(oldTenantId)).data)
           ));
     }
 
     match /managers/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if signedIn()
+        && request.query.limit != null
+        && request.query.limit <= 5;
       allow create: if signedIn()
         && request.auth.uid == uid
         && request.resource.data.keys().hasOnly([
@@ -134,6 +128,7 @@ service cloud.firestore {
           'name',
           'email',
           'phone',
+          'inviteCode',
           'createdAt'
         ])
         && request.resource.data.enabled == true
@@ -142,8 +137,19 @@ service cloud.firestore {
         && request.resource.data.name.size() > 0
         && request.resource.data.email is string
         && (!request.resource.data.keys().hasAny(['phone']) || request.resource.data.phone is string)
+        && request.resource.data.inviteCode is string
+        && request.resource.data.inviteCode.size() >= 6
+        && request.resource.data.inviteCode.size() <= 8
         && request.resource.data.createdAt == request.time;
-      allow update, delete: if false;
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && resource.data.enabled == true
+        && resource.data.get('inviteCode', '') == ''
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['inviteCode'])
+        && request.resource.data.inviteCode is string
+        && request.resource.data.inviteCode.size() >= 6
+        && request.resource.data.inviteCode.size() <= 8;
+      allow delete: if false;
     }
 
     match /rooms/{id} {
@@ -180,27 +186,70 @@ service cloud.firestore {
     match /tenants/{id} {
       allow get: if (manager() && resource == null)
         || owns(resource.data)
-        || tenantEmailMatches(resource.data)
+        || tenantAccountEmailMatches(resource.data)
         || (signedIn()
-          && (resource.data.authUid == request.auth.uid || resource.data.get('authUid', '') == request.auth.uid));
+          && (resource.data.userId == request.auth.uid
+            || resource.data.get('userId', '') == request.auth.uid
+            || resource.data.authUid == request.auth.uid
+            || resource.data.get('authUid', '') == request.auth.uid));
       allow list: if owns(resource.data)
         || (signedIn()
           && request.auth.token.email_verified == true
           && request.auth.token.email is string
-          && (resource.data.email == request.auth.token.email || resource.data.get('email', '') == request.auth.token.email))
+          && (resource.data.email == request.auth.token.email
+            || resource.data.email == request.auth.token.email.lower()
+            || resource.data.get('email', '') == request.auth.token.email
+            || resource.data.get('email', '') == request.auth.token.email.lower()))
         || (signedIn()
-          && (resource.data.authUid == request.auth.uid || resource.data.get('authUid', '') == request.auth.uid));
-      allow create: if createsOwned() || validInviteTenantCreate(request.resource.data, id);
+          && request.auth.token.email is string
+          && request.query.limit != null
+          && request.query.limit <= 10
+          && (resource.data.email == request.auth.token.email
+            || resource.data.email == request.auth.token.email.lower()
+            || resource.data.get('email', '') == request.auth.token.email
+            || resource.data.get('email', '') == request.auth.token.email.lower()))
+        || (signedIn()
+          && (resource.data.userId == request.auth.uid
+            || resource.data.get('userId', '') == request.auth.uid))
+        || (signedIn()
+          && (resource.data.authUid == request.auth.uid
+            || resource.data.get('authUid', '') == request.auth.uid));
+      allow create: if createsOwned();
       allow update: if updatesOwned() || (
-        tenantEmailMatches(resource.data)
+        tenantAccountEmailMatches(resource.data)
         && resource.data.archived != true
         && resource.data.roomId is string
         && resource.data.roomId.size() > 0
+        && (resource.data.get('userId', '') == ''
+          || resource.data.userId == request.auth.uid)
         && (resource.data.get('authUid', '') == ''
           || resource.data.authUid == request.auth.uid)
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['authUid', 'updatedAt'])
-        && request.resource.data.authUid == request.auth.uid
+          .hasOnly(['userId', 'authUid', 'updatedAt'])
+        && request.resource.data.get('userId', '') in ['', request.auth.uid]
+        && request.resource.data.get('authUid', '') in ['', request.auth.uid]
+        && (request.resource.data.get('userId', '') == request.auth.uid
+          || request.resource.data.get('authUid', '') == request.auth.uid)
+        && request.resource.data.updatedAt == request.time
+        && getAfter(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.tenantId == id
+        && getAfter(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.ownerId == resource.data.ownerId
+        && getAfter(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.roomId == resource.data.roomId
+      ) || (
+        signedIn()
+        && tenantLinkedUidMatches(resource.data)
+        && resource.data.archived != true
+        && resource.data.roomId is string
+        && resource.data.roomId.size() > 0
+        && resource.data.get('pendingRoomTransfer', false) == true
+        && request.resource.data.pendingRoomTransfer == false
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['pendingRoomTransfer', 'confirmedRoomTransferAt', 'updatedAt'])
         && request.resource.data.updatedAt == request.time
         && getAfter(
           /databases/$(database)/documents/users/$(request.auth.uid)
@@ -404,6 +453,18 @@ service cloud.firestore {
           'ownerId'
         ])
       ) || (
+        updatesOwned()
+        && resource.data.status in ['unpaid', 'reported']
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.total is number
+        && request.resource.data.total > 0
+        && request.resource.data.lines is list
+        && request.resource.data.lines.size() > 0
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'period',
+          'ownerId'
+        ])
+      ) || (
         signedIn()
         && (
           resource.data.get('recipientUid', '') == request.auth.uid
@@ -494,7 +555,11 @@ service cloud.firestore {
           && maint.status == 'new';
       }
 
-      allow read: if (
+      allow get: if (manager() && resource == null)
+        || (owns(resource.data) && resource.data.audience == 'managers')
+        || (signedIn() && resource.data.get('recipientUid', '') == request.auth.uid);
+
+      allow list: if (
         owns(resource.data) && resource.data.audience == 'managers'
       ) || (
         signedIn() && resource.data.get('recipientUid', '') == request.auth.uid
@@ -515,46 +580,6 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time;
     }
 
-    match /roomInvites/{code} {
-      allow get: if signedIn();
-      allow list: if owns(resource.data);
-      allow create: if createsOwned()
-        && request.resource.data.keys().hasOnly([
-          'code',
-          'ownerId',
-          'roomId',
-          'roomName',
-          'status',
-          'createdAt'
-        ])
-        && request.resource.data.code == code
-        && code.size() == 6
-        && request.resource.data.roomId is string
-        && request.resource.data.roomId.size() > 0
-        && request.resource.data.roomName is string
-        && request.resource.data.status == 'active'
-        && request.resource.data.createdAt == request.time;
-      allow update: if updatesOwned() || (
-        signedIn()
-        && resource.data.status == 'active'
-        && request.resource.data.status == 'used'
-        && request.resource.data.ownerId == resource.data.ownerId
-        && request.resource.data.roomId == resource.data.roomId
-        && request.resource.data.code == resource.data.code
-        && request.resource.data.usedByUid == request.auth.uid
-        && request.resource.data.usedByName is string
-        && request.resource.data.tenantId is string
-        && request.resource.data.tenantId.size() > 0
-        && request.resource.data.usedAt == request.time
-        && existsAfter(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId))
-        && getAfter(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.authUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.ownerId == resource.data.ownerId
-        && getAfter(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.roomId == resource.data.roomId
-        && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
-        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == request.resource.data.tenantId
-      );
-    }
-
     match /users/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow create: if signedIn()
@@ -562,7 +587,11 @@ service cloud.firestore {
         && validTenantMapping(request.resource.data);
       allow update: if signedIn()
         && request.auth.uid == uid
-        && (resource.data == request.resource.data || previousTenantEnded())
+        && (
+          resource.data == request.resource.data
+          || resource.data.get('tenantId', '') == request.resource.data.tenantId
+          || previousTenantEnded()
+        )
         && validTenantMapping(request.resource.data);
 
       match /reads/{noticeId} {

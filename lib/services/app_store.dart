@@ -12,7 +12,24 @@ class AppStore {
   static final instance = AppStore._();
   static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   final db = FirebaseFirestore.instance;
+  final Map<String, Future<String>> _pendingManagerInviteCodes = {};
   String get uid => FirebaseAuth.instance.currentUser!.uid;
+
+  static String linkedUid(Map<String, dynamic>? tenant) {
+    final userId = '${tenant?['userId'] ?? ''}'.trim();
+    if (userId.isNotEmpty) return userId;
+    return '${tenant?['authUid'] ?? ''}'.trim();
+  }
+
+  static bool isTenantLinkedToUid(Map<String, dynamic> tenant, String uid) =>
+      '${tenant['userId'] ?? ''}'.trim() == uid ||
+      '${tenant['authUid'] ?? ''}'.trim() == uid;
+
+  static bool isTenantLinkedToOther(Map<String, dynamic> tenant, String uid) {
+    final u = '${tenant['userId'] ?? ''}'.trim();
+    final a = '${tenant['authUid'] ?? ''}'.trim();
+    return (u.isNotEmpty && u != uid) || (a.isNotEmpty && a != uid);
+  }
   Stream<List<Record>> watch(
     String collection, {
     String? field,
@@ -73,113 +90,190 @@ class AppStore {
     return commands.command(action, key: id, d: data ?? {}, args: args);
   }
 
-  Future<String> getOrCreateRoomInvite({
-    required String roomId,
-    required String roomName,
-    bool forceNew = false,
-  }) async {
-    final ownerUid = uid;
-    final existingSnapshot = await db
-        .collection('roomInvites')
-        .where('ownerId', isEqualTo: ownerUid)
-        .get();
-    final activeDocs = existingSnapshot.docs.where((doc) {
-      final data = doc.data();
-      return data['roomId'] == roomId && data['status'] == 'active';
-    }).toList();
-
-    if (!forceNew && activeDocs.isNotEmpty) {
-      return '${activeDocs.first.data()['code'] ?? activeDocs.first.id}';
-    }
-
-    if (forceNew) {
-      for (final doc in activeDocs) {
-        await doc.reference.update({'status': 'revoked'});
-      }
-    }
-
+  Future<String> generateUniqueManagerInviteCode({int length = 6}) async {
     final random = Random.secure();
-    for (var attempt = 0; attempt < 12; attempt++) {
+    for (var attempt = 0; attempt < 20; attempt++) {
       final code = List.generate(
-        6,
+        length,
         (_) => _inviteAlphabet[random.nextInt(_inviteAlphabet.length)],
       ).join();
-      final inviteRef = db.collection('roomInvites').doc(code);
-      final existing = await inviteRef.get();
-      if (existing.exists) continue;
-      await inviteRef.set({
-        'code': code,
-        'ownerId': ownerUid,
-        'roomId': roomId,
-        'roomName': roomName,
-        'status': 'active',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      return code;
+      final existing = await db
+          .collection('managers')
+          .where('inviteCode', isEqualTo: code)
+          .limit(1)
+          .get();
+      if (existing.docs.isEmpty) return code;
     }
-    throw StateError('Chưa tạo được mã mời mới. Vui lòng thử lại.');
+    throw StateError('Chưa tạo được mã mời dãy trọ. Vui lòng thử lại.');
   }
 
-  Future<Map<String, dynamic>> joinRoomByInviteCode(
-    String rawCode, {
-    String? displayName,
-    String? phone,
+  Future<String> createManagerAccount({
+    required String uid,
+    required String name,
+    required String email,
+    String phone = '',
   }) async {
+    final managerRef = db.collection('managers').doc(uid);
+    final existingSnap = await managerRef.get();
+    final existingData = existingSnap.data();
+    final existingCode = '${existingData?['inviteCode'] ?? ''}'
+        .trim()
+        .toUpperCase();
+    final inviteCode = existingCode.isNotEmpty
+        ? existingCode
+        : await generateUniqueManagerInviteCode();
+
+    if (existingSnap.exists) {
+      if (existingData?['enabled'] == true && existingCode.isEmpty) {
+        await managerRef.update({'inviteCode': inviteCode});
+      }
+      return inviteCode;
+    }
+
+    final normalizedPhone = phone.trim();
+    await managerRef.set({
+      'enabled': true,
+      'role': 'landlord',
+      'name': name.trim(),
+      'email': email.trim().toLowerCase(),
+      if (normalizedPhone.isNotEmpty) 'phone': normalizedPhone,
+      'inviteCode': inviteCode,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    return inviteCode;
+  }
+
+  Future<String> ensureManagerInviteCode() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw StateError('Bạn cần đăng nhập trước.');
+    }
+    return _pendingManagerInviteCodes[user.uid] ??= () async {
+      try {
+        final managerRef = db.collection('managers').doc(user.uid);
+        final snap = await managerRef.get();
+        final data = snap.data();
+        if (!snap.exists || data == null || data['enabled'] != true) {
+          throw StateError('Tài khoản chưa được cấp quyền Chủ trọ.');
+        }
+        final existingCode = '${data['inviteCode'] ?? ''}'.trim().toUpperCase();
+        if (existingCode.isNotEmpty) return existingCode;
+        final code = await generateUniqueManagerInviteCode();
+        await managerRef.update({'inviteCode': code});
+        return code;
+      } finally {
+        _pendingManagerInviteCodes.remove(user.uid);
+      }
+    }();
+  }
+
+  Future<Map<String, dynamic>> joinRoomByInviteCode(String rawCode) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       throw StateError('Bạn cần đăng nhập trước khi nhập mã mời.');
     }
-    final code = rawCode
-        .trim()
-        .toUpperCase()
-        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
-    if (code.length != 6) {
-      throw StateError('Mã mời vào phòng phải gồm đúng 6 ký tự chữ và số.');
+    final code = rawCode.trim().toUpperCase();
+    if (code.isEmpty) {
+      throw StateError('Vui lòng nhập mã mời từ chủ trọ.');
     }
-    final normalizedEmail = (user.email ?? '').trim().toLowerCase();
-    final fallbackName = user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : normalizedEmail.contains('@')
-        ? normalizedEmail.substring(0, normalizedEmail.indexOf('@'))
-        : 'Người thuê';
-    final resolvedName = (displayName ?? '').trim().isNotEmpty
-        ? displayName!.trim()
-        : fallbackName;
-    final resolvedPhone = (phone ?? '').trim();
+    final userEmail = (user.email ?? '').trim().toLowerCase();
+    if (userEmail.isEmpty) {
+      throw StateError('Tài khoản đăng nhập chưa có email.');
+    }
 
-    final inviteRef = db.collection('roomInvites').doc(code);
+    // Bước 1: Truy vấn managers theo inviteCode
+    final managerSnap = await db
+        .collection('managers')
+        .where('inviteCode', isEqualTo: code)
+        .limit(1)
+        .get();
+    if (managerSnap.docs.isEmpty ||
+        managerSnap.docs.first.data()['enabled'] == false) {
+      throw StateError('Mã mời không tồn tại hoặc không chính xác');
+    }
+    final ownerId = managerSnap.docs.first.id;
+
+    // Bước 2: Truy vấn tenants theo ownerId và email đã chuẩn hóa
+    final tenantSnap = await db
+        .collection('tenants')
+        .where('ownerId', isEqualTo: ownerId)
+        .where('email', isEqualTo: userEmail)
+        .limit(5)
+        .get();
+    final roomMatches = tenantSnap.docs.where((doc) {
+      final data = doc.data();
+      return data['archived'] != true &&
+          '${data['roomId'] ?? ''}'.trim().isNotEmpty;
+    }).toList();
+    if (roomMatches.isEmpty) {
+      throw StateError(
+        'Email của bạn chưa được chủ trọ thêm vào phòng nào trong dãy trọ này',
+      );
+    }
+    final activeMatches = roomMatches
+        .where((doc) => doc.data()['hasActiveContract'] != false)
+        .toList();
+    if (activeMatches.isEmpty) {
+      throw StateError(
+        'Phòng của bạn hiện chưa có hợp đồng hiệu lực nên chưa thể tham gia bằng mã mời',
+      );
+    }
+
+    QueryDocumentSnapshot<Map<String, dynamic>>? targetDoc;
+    for (final doc in activeMatches) {
+      if (isTenantLinkedToUid(doc.data(), user.uid) &&
+          !isTenantLinkedToOther(doc.data(), user.uid)) {
+        targetDoc = doc;
+        break;
+      }
+    }
+    targetDoc ??= activeMatches
+        .where((doc) => !isTenantLinkedToOther(doc.data(), user.uid))
+        .firstOrNull;
+    if (targetDoc == null) {
+      throw StateError(
+        'Hồ sơ thuê này đã được liên kết với một tài khoản khác.',
+      );
+    }
+
+    // Bước 3: Liên kết userId/authUid vào document tenants và lưu ánh xạ ở users/{uid}
+    final tenantRef = targetDoc.reference;
     final userRef = db.collection('users').doc(user.uid);
-    final tenantRef = db.collection('tenants').doc();
-
-    return db.runTransaction((transaction) async {
-      final inviteSnap = await transaction.get(inviteRef);
+    final linked = await db.runTransaction((transaction) async {
+      final currentTenantSnap = await transaction.get(tenantRef);
       final userSnap = await transaction.get(userRef);
-
-      if (!inviteSnap.exists) {
-        throw StateError('Mã mời "$code" không tồn tại. Hãy kiểm tra lại.');
-      }
-      final invite = inviteSnap.data()!;
-      final status = '${invite['status'] ?? ''}';
-      if (status == 'used') {
+      final tenant = currentTenantSnap.data();
+      final roomId = '${tenant?['roomId'] ?? ''}'.trim();
+      final tenantEmail = '${tenant?['email'] ?? ''}'.trim().toLowerCase();
+      if (!currentTenantSnap.exists ||
+          tenant == null ||
+          tenant['archived'] == true ||
+          tenant['ownerId'] != ownerId ||
+          tenantEmail != userEmail ||
+          roomId.isEmpty) {
         throw StateError(
-          'Mã mời này đã được sử dụng. Hãy nhờ chủ trọ tạo mã mời mới.',
+          'Email của bạn chưa được chủ trọ thêm vào phòng nào trong dãy trọ này',
         );
       }
-      if (status != 'active') {
+      if (tenant['hasActiveContract'] == false) {
         throw StateError(
-          'Mã mời này đã bị hủy hoặc hết hiệu lực. Hãy nhờ chủ trọ cấp mã mới.',
+          'Phòng của bạn hiện chưa có hợp đồng hiệu lực nên chưa thể tham gia bằng mã mời',
         );
       }
-      final ownerId = '${invite['ownerId'] ?? ''}';
-      final roomId = '${invite['roomId'] ?? ''}';
-      final roomName = '${invite['roomName'] ?? ''}';
-      if (ownerId.isEmpty || roomId.isEmpty) {
-        throw StateError('Mã mời không hợp lệ. Hãy nhờ chủ trọ tạo mã mới.');
+      if (tenant['pendingRoomTransfer'] == true) {
+        throw StateError(
+          'Hồ sơ của bạn đang chờ xác nhận chuyển phòng. Hãy nhấn xác nhận chuyển phòng trên màn hình chính.',
+        );
+      }
+      if (isTenantLinkedToOther(tenant, user.uid)) {
+        throw StateError(
+          'Hồ sơ thuê này đã được liên kết với một tài khoản khác.',
+        );
       }
 
       final priorMapping = userSnap.data();
-      final priorTenantId = '${priorMapping?['tenantId'] ?? ''}';
-      if (priorTenantId.isNotEmpty) {
+      final priorTenantId = '${priorMapping?['tenantId'] ?? ''}'.trim();
+      if (priorTenantId.isNotEmpty && priorTenantId != currentTenantSnap.id) {
         final priorTenantSnap = await transaction.get(
           db.collection('tenants').doc(priorTenantId),
         );
@@ -188,8 +282,8 @@ class AppStore {
             priorTenantSnap.exists &&
             priorTenant != null &&
             priorTenant['archived'] != true &&
-            priorTenant['authUid'] == user.uid &&
-            '${priorTenant['roomId'] ?? ''}'.isNotEmpty;
+            isTenantLinkedToUid(priorTenant, user.uid) &&
+            '${priorTenant['roomId'] ?? ''}'.trim().isNotEmpty;
         if (stillActive) {
           if (priorTenant['roomId'] == roomId) {
             throw StateError('Tài khoản của bạn đã tham gia phòng này rồi.');
@@ -200,70 +294,265 @@ class AppStore {
         }
       }
 
-      transaction.set(tenantRef, {
-        'ownerId': ownerId,
-        'name': resolvedName,
-        'phone': resolvedPhone,
-        'email': normalizedEmail,
-        'identity': '',
-        'birthday': '',
-        'address': '',
-        'note': 'Tham gia bằng mã mời $code',
-        'role': 'member',
-        'cccdFrontUrl': '',
-        'cccdBackUrl': '',
-        'roomId': roomId,
-        'archived': false,
+      transaction.update(tenantRef, {
+        'userId': user.uid,
         'authUid': user.uid,
-        'inviteCode': code,
-        'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
       transaction.set(userRef, {
-        'tenantId': tenantRef.id,
+        'tenantId': currentTenantSnap.id,
         'ownerId': ownerId,
         'roomId': roomId,
-      });
-      transaction.update(inviteRef, {
-        'status': 'used',
-        'usedByUid': user.uid,
-        'usedByName': resolvedName,
-        'tenantId': tenantRef.id,
-        'usedAt': FieldValue.serverTimestamp(),
       });
 
       return {
         'roomId': roomId,
-        'roomName': roomName,
         'ownerId': ownerId,
-        'tenantId': tenantRef.id,
+        'tenantId': currentTenantSnap.id,
       };
     });
+
+    var roomName = '';
+    try {
+      final roomSnap = await db
+          .collection('rooms')
+          .doc(linked['roomId'] as String)
+          .get();
+      roomName = '${roomSnap.data()?['name'] ?? ''}'.trim();
+    } catch (_) {}
+
+    return {...linked, 'roomName': roomName};
+  }
+
+  Map<String, dynamic> _pendingTransferPayload({
+    required String tenantId,
+    required Map<String, dynamic> tenantData,
+    String fallbackFromRoomId = '',
+  }) {
+    final actualRoomId = '${tenantData['roomId'] ?? ''}'.trim();
+    return {
+      'pendingRoomTransfer': true,
+      'tenantId': tenantId,
+      'tenantName': '${tenantData['name'] ?? ''}'.trim(),
+      'fromRoomId': '${tenantData['transferFromRoomId'] ?? fallbackFromRoomId}'
+          .trim(),
+      'fromRoomName': '${tenantData['transferFromRoomName'] ?? ''}'.trim(),
+      'toRoomId':
+          '${tenantData['transferToRoomId'] ?? actualRoomId}'.trim().isEmpty
+          ? actualRoomId
+          : '${tenantData['transferToRoomId']}'.trim(),
+      'toRoomName': '${tenantData['transferToRoomName'] ?? ''}'.trim(),
+    };
+  }
+
+  Future<Map<String, dynamic>> confirmRoomTransfer({String? noticeId}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw StateError('Bạn cần đăng nhập trước.');
+    }
+    final userRef = db.collection('users').doc(user.uid);
+    final userSnap = await userRef.get();
+    var tenantId = '${userSnap.data()?['tenantId'] ?? ''}'.trim();
+    if (tenantId.isEmpty) {
+      final uidDocs = await Future.wait([
+        _safeQuery(
+          db.collection('tenants').where('userId', isEqualTo: user.uid),
+        ),
+        _safeQuery(
+          db.collection('tenants').where('authUid', isEqualTo: user.uid),
+        ),
+      ]);
+      for (final docs in uidDocs) {
+        for (final doc in docs) {
+          final d = doc.data();
+          if (d['archived'] != true &&
+              '${d['roomId'] ?? ''}'.trim().isNotEmpty &&
+              !isTenantLinkedToOther(d, user.uid)) {
+            tenantId = doc.id;
+            break;
+          }
+        }
+        if (tenantId.isNotEmpty) break;
+      }
+    }
+    if (tenantId.isEmpty) {
+      throw StateError('Không tìm thấy hồ sơ thuê cần xác nhận chuyển phòng.');
+    }
+
+    final tenantRef = db.collection('tenants').doc(tenantId);
+    final result = await db.runTransaction((transaction) async {
+      final currentSnap = await transaction.get(tenantRef);
+      final tenant = currentSnap.data();
+      final actualOwnerId = '${tenant?['ownerId'] ?? ''}'.trim();
+      final actualRoomId = '${tenant?['roomId'] ?? ''}'.trim();
+      if (!currentSnap.exists ||
+          tenant == null ||
+          tenant['archived'] == true ||
+          !isTenantLinkedToUid(tenant, user.uid) ||
+          isTenantLinkedToOther(tenant, user.uid) ||
+          actualOwnerId.isEmpty ||
+          actualRoomId.isEmpty) {
+        throw StateError('Hồ sơ thuê không còn hiệu lực.');
+      }
+      if (tenant['pendingRoomTransfer'] == true) {
+        transaction.update(tenantRef, {
+          'pendingRoomTransfer': false,
+          'confirmedRoomTransferAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      transaction.set(userRef, {
+        'tenantId': tenantId,
+        'ownerId': actualOwnerId,
+        'roomId': actualRoomId,
+      });
+      return {
+        'tenantId': tenantId,
+        'ownerId': actualOwnerId,
+        'roomId': actualRoomId,
+        'roomName': '${tenant['transferToRoomName'] ?? ''}'.trim(),
+      };
+    });
+
+    try {
+      if (noticeId != null && noticeId.trim().isNotEmpty) {
+        await markRead(noticeId.trim());
+      }
+      final notices = await _safeQuery(
+        db.collection('notifications').where('recipientUid', isEqualTo: user.uid),
+      );
+      for (final n in notices) {
+        if (n.data()['type'] == 'room_transfer') {
+          await markRead(n.id);
+        }
+      }
+    } catch (_) {}
+
+    return result;
   }
 
   Future<Map<String, dynamic>?> loadTenantPortalOrNull() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
-    final userSnapshot = await db.collection('users').doc(user.uid).get();
+    final userRef = db.collection('users').doc(user.uid);
+    DocumentSnapshot<Map<String, dynamic>> userSnapshot;
+    try {
+      userSnapshot = await userRef.get();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return null;
+      rethrow;
+    }
     var mapping = userSnapshot.data();
-    mapping ??= await _restoreTenantMapping(user);
-    if (mapping == null ||
-        mapping['tenantId'] is! String ||
-        mapping['ownerId'] is! String ||
-        mapping['roomId'] is! String) {
-      return null;
+    String? priorOwnerId;
+    if (mapping != null &&
+        mapping['ownerId'] is String &&
+        (mapping['ownerId'] as String).trim().isNotEmpty) {
+      priorOwnerId = (mapping['ownerId'] as String).trim();
     }
-    final tenantId = mapping['tenantId'] as String;
-    final tenantSnapshot = await db.collection('tenants').doc(tenantId).get();
-    final tenantData = tenantSnapshot.data();
-    if (!tenantSnapshot.exists ||
-        tenantData == null ||
-        tenantData['archived'] == true ||
-        tenantData['authUid'] != user.uid ||
-        '${tenantData['roomId'] ?? ''}'.isEmpty) {
-      return null;
+
+    if (mapping != null &&
+        mapping['tenantId'] is String &&
+        mapping['ownerId'] is String &&
+        mapping['roomId'] is String) {
+      final tenantId = (mapping['tenantId'] as String).trim();
+      if (tenantId.isNotEmpty) {
+        final tenantRef = db.collection('tenants').doc(tenantId);
+        DocumentSnapshot<Map<String, dynamic>>? tenantSnapshot;
+        try {
+          tenantSnapshot = await tenantRef.get();
+        } on FirebaseException catch (e) {
+          if (e.code != 'permission-denied') rethrow;
+        }
+        final tenantData = tenantSnapshot?.data();
+        final actualRoomId = '${tenantData?['roomId'] ?? ''}'.trim();
+        final actualOwnerId = '${tenantData?['ownerId'] ?? ''}'.trim();
+        if (tenantSnapshot != null &&
+            tenantSnapshot.exists &&
+            tenantData != null &&
+            tenantData['archived'] != true &&
+            isTenantLinkedToUid(tenantData, user.uid) &&
+            !isTenantLinkedToOther(tenantData, user.uid) &&
+            actualOwnerId.isNotEmpty &&
+            actualRoomId.isNotEmpty) {
+          final mappedRoomId = '${mapping['roomId'] ?? ''}'.trim();
+          final isUnconfirmedTransfer =
+              tenantData['pendingRoomTransfer'] == true ||
+              (mapping['ownerId'] == actualOwnerId &&
+                  mappedRoomId.isNotEmpty &&
+                  mappedRoomId != actualRoomId);
+          if (isUnconfirmedTransfer) {
+            return _pendingTransferPayload(
+              tenantId: tenantId,
+              tenantData: tenantData,
+              fallbackFromRoomId: mappedRoomId,
+            );
+          }
+          final needsMappingSync =
+              mapping['ownerId'] != actualOwnerId ||
+              mapping['roomId'] != actualRoomId;
+          final needsTenantSync =
+              '${tenantData['userId'] ?? ''}'.trim() != user.uid ||
+              '${tenantData['authUid'] ?? ''}'.trim() != user.uid;
+          final userEmail = (user.email ?? '').trim().toLowerCase();
+          final tenantEmail = '${tenantData['email'] ?? ''}'
+              .trim()
+              .toLowerCase();
+          final canSyncTenant =
+              needsTenantSync &&
+              userEmail.isNotEmpty &&
+              tenantEmail == userEmail;
+          if (needsMappingSync || canSyncTenant) {
+            mapping = await db.runTransaction((transaction) async {
+              final nextMapping = {
+                'tenantId': tenantId,
+                'ownerId': actualOwnerId,
+                'roomId': actualRoomId,
+              };
+              if (canSyncTenant) {
+                transaction.update(tenantRef, {
+                  'userId': user.uid,
+                  'authUid': user.uid,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+              }
+              if (needsMappingSync) {
+                transaction.set(userRef, nextMapping);
+              }
+              return nextMapping;
+            });
+          }
+          return _loadTenantPortal(user, resolvedMapping: mapping);
+        }
+      }
     }
-    return _loadTenantPortal(user);
+
+    final pendingFromSearch = await _findPendingTransferProfile(user);
+    if (pendingFromSearch != null) return pendingFromSearch;
+
+    mapping = await _restoreTenantMapping(user, priorOwnerId: priorOwnerId);
+    if (mapping == null) return null;
+    return _loadTenantPortal(user, resolvedMapping: mapping);
+  }
+
+  Future<Map<String, dynamic>?> _findPendingTransferProfile(User user) async {
+    final uidDocs = await Future.wait([
+      _safeQuery(db.collection('tenants').where('userId', isEqualTo: user.uid)),
+      _safeQuery(
+        db.collection('tenants').where('authUid', isEqualTo: user.uid),
+      ),
+    ]);
+    for (final docs in uidDocs) {
+      for (final doc in docs) {
+        final d = doc.data();
+        if (d['archived'] != true &&
+            d['pendingRoomTransfer'] == true &&
+            '${d['roomId'] ?? ''}'.trim().isNotEmpty &&
+            !isTenantLinkedToOther(d, user.uid)) {
+          return _pendingTransferPayload(tenantId: doc.id, tenantData: d);
+        }
+      }
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> tenantPortal({
@@ -287,7 +576,7 @@ class AppStore {
   }
 
   Future<Map<String, dynamic>> _lookupTenantByEmail(User user) async {
-    final email = user.email?.trim();
+    final email = user.email?.trim().toLowerCase();
     if (email == null || email.isEmpty) {
       throw StateError('Tài khoản đăng nhập chưa có email.');
     }
@@ -306,6 +595,7 @@ class AppStore {
             'id': doc.id,
             'name': doc.data()['name'] ?? '',
             'email': doc.data()['email'] ?? '',
+            'userId': linkedUid(doc.data()),
             'authUid': doc.data()['authUid'] ?? '',
           },
         )
@@ -334,8 +624,7 @@ class AppStore {
           '${tenant['roomId'] ?? ''}'.isEmpty) {
         throw StateError('Email không khớp hồ sơ thuê đang hoạt động.');
       }
-      final linkedUid = '${tenant['authUid'] ?? ''}';
-      if (linkedUid.isNotEmpty && linkedUid != user.uid) {
+      if (isTenantLinkedToOther(tenant, user.uid)) {
         throw StateError('Hồ sơ thuê này đã liên kết với tài khoản khác.');
       }
       final priorMapping = userSnapshot.data();
@@ -347,6 +636,7 @@ class AppStore {
         );
       }
       transaction.update(tenantRef, {
+        'userId': user.uid,
         'authUid': user.uid,
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -360,10 +650,19 @@ class AppStore {
     return {'tenantName': tenantName};
   }
 
-  Future<Map<String, dynamic>> _loadTenantPortal(User user) async {
-    final userSnapshot = await db.collection('users').doc(user.uid).get();
-    var mapping = userSnapshot.data();
-    mapping ??= await _restoreTenantMapping(user);
+  Future<Map<String, dynamic>> _loadTenantPortal(
+    User user, {
+    Map<String, dynamic>? resolvedMapping,
+  }) async {
+    var mapping = resolvedMapping;
+    if (mapping == null) {
+      final userSnapshot = await db.collection('users').doc(user.uid).get();
+      mapping = userSnapshot.data();
+      final priorOwnerId = mapping?['ownerId'] is String
+          ? mapping!['ownerId'] as String
+          : null;
+      mapping ??= await _restoreTenantMapping(user, priorOwnerId: priorOwnerId);
+    }
     if (mapping == null ||
         mapping['tenantId'] is! String ||
         mapping['ownerId'] is! String ||
@@ -513,24 +812,69 @@ class AppStore {
     };
   }
 
-  Future<Map<String, dynamic>?> _restoreTenantMapping(User user) async {
-    final email = user.email?.trim();
-    if (email == null || email.isEmpty) {
-      throw StateError('Tài khoản đăng nhập chưa có email.');
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _safeQuery(
+    Query<Map<String, dynamic>> query,
+  ) async {
+    try {
+      return (await query.get()).docs;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return const [];
+      rethrow;
     }
-    final profiles = await db
-        .collection('tenants')
-        .where('authUid', isEqualTo: user.uid)
-        .get();
-    final linkedProfiles = profiles.docs.where((profile) {
+  }
+
+  Future<Map<String, dynamic>?> _restoreTenantMapping(
+    User user, {
+    String? priorOwnerId,
+  }) async {
+    final normalizedEmail = (user.email ?? '').trim().toLowerCase();
+    final uidDocs = await Future.wait([
+      _safeQuery(db.collection('tenants').where('userId', isEqualTo: user.uid)),
+      _safeQuery(db.collection('tenants').where('authUid', isEqualTo: user.uid)),
+    ]);
+    final byId = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+    for (final docs in uidDocs) {
+      for (final doc in docs) {
+        byId[doc.id] = doc;
+      }
+    }
+    var linkedProfiles = byId.values.where((profile) {
       final tenant = profile.data();
-      return '${tenant['email'] ?? ''}'.trim().toLowerCase() ==
-              email.toLowerCase() &&
+      final tenantEmail = '${tenant['email'] ?? ''}'.trim().toLowerCase();
+      final emailCompatible =
+          tenantEmail.isEmpty ||
+          normalizedEmail.isEmpty ||
+          tenantEmail == normalizedEmail;
+      return emailCompatible &&
+          !isTenantLinkedToOther(tenant, user.uid) &&
           tenant['archived'] != true &&
           tenant['ownerId'] is String &&
+          (tenant['ownerId'] as String).trim().isNotEmpty &&
           tenant['roomId'] is String &&
-          (tenant['roomId'] as String).isNotEmpty;
+          (tenant['roomId'] as String).trim().isNotEmpty;
     }).toList();
+
+    if (linkedProfiles.isEmpty &&
+        priorOwnerId != null &&
+        priorOwnerId.trim().isNotEmpty &&
+        normalizedEmail.isNotEmpty) {
+      final emailDocs = await _safeQuery(
+        db
+            .collection('tenants')
+            .where('ownerId', isEqualTo: priorOwnerId.trim())
+            .where('email', isEqualTo: normalizedEmail)
+            .limit(5),
+      );
+      linkedProfiles = emailDocs.where((profile) {
+        final tenant = profile.data();
+        return !isTenantLinkedToOther(tenant, user.uid) &&
+            tenant['archived'] != true &&
+            tenant['ownerId'] == priorOwnerId.trim() &&
+            tenant['roomId'] is String &&
+            (tenant['roomId'] as String).trim().isNotEmpty;
+      }).toList();
+    }
+
     if (linkedProfiles.isEmpty) return null;
     if (linkedProfiles.length != 1) {
       throw StateError(
@@ -540,34 +884,57 @@ class AppStore {
 
     final profile = linkedProfiles.single;
     final tenant = profile.data();
+    final ownerId = (tenant['ownerId'] as String).trim();
+    final roomId = (tenant['roomId'] as String).trim();
     final userRef = db.collection('users').doc(user.uid);
     final tenantRef = profile.reference;
     return db.runTransaction((transaction) async {
       final userSnapshot = await transaction.get(userRef);
       final tenantSnapshot = await transaction.get(tenantRef);
-      if (userSnapshot.exists) {
-        throw StateError(
-          'Dữ liệu liên kết tài khoản chưa hợp lệ. Hãy liên hệ chủ trọ để kiểm tra.',
-        );
-      }
       final currentTenant = tenantSnapshot.data();
       if (currentTenant == null ||
-          currentTenant['authUid'] != user.uid ||
-          '${currentTenant['email'] ?? ''}'.trim().toLowerCase() !=
-              email.toLowerCase() ||
           currentTenant['archived'] == true ||
-          currentTenant['ownerId'] != tenant['ownerId'] ||
-          currentTenant['roomId'] != tenant['roomId']) {
+          isTenantLinkedToOther(currentTenant, user.uid) ||
+          currentTenant['ownerId'] != ownerId ||
+          currentTenant['roomId'] != roomId) {
         throw StateError(
           'Hồ sơ thuê đã thay đổi. Hãy đăng nhập lại hoặc liên hệ chủ trọ.',
         );
       }
+
+      final currentTenantEmail = '${currentTenant['email'] ?? ''}'
+          .trim()
+          .toLowerCase();
+      final needsTenantUidSync =
+          '${currentTenant['userId'] ?? ''}'.trim() != user.uid ||
+          '${currentTenant['authUid'] ?? ''}'.trim() != user.uid;
+      if (needsTenantUidSync) {
+        if (normalizedEmail.isEmpty ||
+            (currentTenantEmail.isNotEmpty &&
+                currentTenantEmail != normalizedEmail)) {
+          throw StateError(
+            'Hồ sơ thuê đã thay đổi. Hãy đăng nhập lại hoặc liên hệ chủ trọ.',
+          );
+        }
+        transaction.update(tenantRef, {
+          'userId': user.uid,
+          'authUid': user.uid,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
       final mapping = {
         'tenantId': profile.id,
-        'ownerId': tenant['ownerId'],
-        'roomId': tenant['roomId'],
+        'ownerId': ownerId,
+        'roomId': roomId,
       };
-      transaction.set(userRef, mapping);
+      final existingMapping = userSnapshot.data();
+      if (existingMapping == null ||
+          existingMapping['tenantId'] != mapping['tenantId'] ||
+          existingMapping['ownerId'] != mapping['ownerId'] ||
+          existingMapping['roomId'] != mapping['roomId']) {
+        transaction.set(userRef, mapping);
+      }
       return mapping;
     });
   }
@@ -702,7 +1069,8 @@ class AppStore {
           !roomSnapshot.exists ||
           tenant == null ||
           room == null ||
-          tenant['authUid'] != user.uid ||
+          !isTenantLinkedToUid(tenant, user.uid) ||
+          isTenantLinkedToOther(tenant, user.uid) ||
           tenant['archived'] == true ||
           tenant['ownerId'] != ownerId ||
           tenant['roomId'] != roomId ||

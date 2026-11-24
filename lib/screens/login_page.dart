@@ -17,29 +17,41 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final formKey = GlobalKey<FormState>();
   final emailFieldKey = GlobalKey<FormFieldState<String>>();
-  final email = TextEditingController(), password = TextEditingController();
+  final inviteFieldKey = GlobalKey<FormFieldState<String>>();
+  final email = TextEditingController(),
+      password = TextEditingController(),
+      inviteCode = TextEditingController();
   bool busy = false, googleBusy = false, hidden = true;
   _LoginRole? selectedRole;
-  String? emailAuthError, passwordAuthError;
+  String? emailAuthError, passwordAuthError, inviteAuthError;
   String? roleAuthError;
 
   @override
   void dispose() {
     email.dispose();
     password.dispose();
+    inviteCode.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
     if (busy) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     if (selectedRole == null) {
       setState(() => roleAuthError = 'Vui lòng chọn Chủ trọ hoặc Người thuê');
       return;
     }
+    if (inviteAuthError != null) {
+      setState(() => inviteAuthError = null);
+    }
     if (!formKey.currentState!.validate()) return;
+    final rawInvite = selectedRole == _LoginRole.tenant
+        ? inviteCode.text.trim().toUpperCase()
+        : '';
     setState(() {
       emailAuthError = null;
       passwordAuthError = null;
+      inviteAuthError = null;
       roleAuthError = null;
       busy = true;
     });
@@ -74,6 +86,18 @@ class _LoginPageState extends State<LoginPage> {
           });
         }
         return;
+      }
+      if (!wantsLandlord && rawInvite.isNotEmpty) {
+        try {
+          await store.joinRoomByInviteCode(rawInvite);
+        } catch (e) {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            setState(() => inviteAuthError = errorText(e));
+            inviteFieldKey.currentState?.validate();
+          }
+          return;
+        }
       }
       preferredLandlordMode.value = wantsLandlord;
     } catch (e) {
@@ -110,13 +134,18 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _loginWithGoogle() async {
     if (busy) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     if (selectedRole == null) {
       setState(() => roleAuthError = 'Vui lòng chọn Chủ trọ hoặc Người thuê');
       return;
     }
+    final rawInvite = selectedRole == _LoginRole.tenant
+        ? inviteCode.text.trim().toUpperCase()
+        : '';
     setState(() {
       emailAuthError = null;
       passwordAuthError = null;
+      inviteAuthError = null;
       roleAuthError = null;
       busy = true;
       googleBusy = true;
@@ -171,17 +200,12 @@ class _LoginPageState extends State<LoginPage> {
           final ownerName = submitted['name']!;
           final phone = submitted['phone'] ?? '';
           final address = submitted['address'] ?? '';
-          await FirebaseFirestore.instance
-              .collection('managers')
-              .doc(user.uid)
-              .set({
-                'enabled': true,
-                'role': 'landlord',
-                'name': ownerName,
-                'email': normalizedEmail,
-                if (phone.isNotEmpty) 'phone': phone,
-                'createdAt': FieldValue.serverTimestamp(),
-              });
+          await store.createManagerAccount(
+            uid: user.uid,
+            name: ownerName,
+            email: normalizedEmail,
+            phone: phone,
+          );
           try {
             await FirebaseFirestore.instance
                 .collection('settings')
@@ -199,6 +223,21 @@ class _LoginPageState extends State<LoginPage> {
         } catch (e) {
           await GoogleAuthService.signOut();
           rethrow;
+        }
+      }
+
+      if (!wantsLandlord && rawInvite.isNotEmpty) {
+        try {
+          await store.joinRoomByInviteCode(rawInvite);
+        } catch (e) {
+          await GoogleAuthService.signOut();
+          if (mounted) {
+            final detail = errorText(e);
+            setState(() => inviteAuthError = detail);
+            inviteFieldKey.currentState?.validate();
+            message(context, detail);
+          }
+          return;
         }
       }
 
@@ -296,6 +335,7 @@ class _LoginPageState extends State<LoginPage> {
               : () => setState(() {
                   selectedRole = role;
                   roleAuthError = null;
+                  inviteAuthError = null;
                 }),
           child: Container(
             height: 46,
@@ -463,6 +503,55 @@ class _LoginPageState extends State<LoginPage> {
                             color: Color(0xFFB91C1C),
                             fontSize: 11,
                           ),
+                        ),
+                      ],
+                      if (selectedRole == _LoginRole.tenant) ...[
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Mã mời dãy trọ (tùy chọn)',
+                          style: TextStyle(
+                            color: ink,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Lần đầu tham gia phòng? Nhập mã mời cố định của dãy trọ bên dưới (để trống nếu tài khoản đã vào phòng trước đó).',
+                          style: TextStyle(color: muted, fontSize: 11.5),
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          key: inviteFieldKey,
+                          controller: inviteCode,
+                          textCapitalization: TextCapitalization.characters,
+                          style: const TextStyle(
+                            color: ink,
+                            fontSize: 14,
+                            letterSpacing: 2,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          autovalidateMode: AutovalidateMode.onUserInteraction,
+                          onChanged: (_) =>
+                              setState(() => inviteAuthError = null),
+                          decoration:
+                              _inputDecoration(
+                                hint:
+                                    'VD: A7K92P (để trống nếu đã liên kết phòng)',
+                              ).copyWith(
+                                hintStyle: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontSize: 12.5,
+                                  letterSpacing: 0,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.vpn_key_outlined,
+                                  color: blue,
+                                  size: 19,
+                                ),
+                              ),
+                          validator: (_) => inviteAuthError,
                         ),
                       ],
                       const SizedBox(height: 18),
@@ -655,8 +744,10 @@ class _LoginPageState extends State<LoginPage> {
                                   : _LoginRole.tenant;
                               email.text = result.email;
                               password.clear();
+                              inviteCode.clear();
                               emailAuthError = null;
                               passwordAuthError = null;
+                              inviteAuthError = null;
                               roleAuthError = null;
                             });
                             final joinedRoom =

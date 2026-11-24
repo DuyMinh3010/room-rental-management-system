@@ -98,7 +98,7 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
     if (action === "linkTenantAccount") {
       const t = await ref("tenants", id(a.id)).get();
       owned(value(t), ownerId, "Người thuê");
-      const email = text(a.email, "email");
+      const email = text(a.email, "email").trim().toLowerCase();
       let u;
       try {
         u = await getAuth().getUserByEmail(email);
@@ -111,7 +111,12 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
         const q = await tx.get(
           ownerQuery("contracts", ownerId, "tenantId", a.id),
         );
-        tx.update(t.ref, { authUid: u.uid, email, updatedAt: stamp() });
+        tx.update(t.ref, {
+          userId: u.uid,
+          authUid: u.uid,
+          email,
+          updatedAt: stamp(),
+        });
         for (const c of q.docs)
           if (active(c.data()))
             tx.update(c.ref, { recipientUid: u.uid, updatedAt: stamp() });
@@ -213,7 +218,11 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
           !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(tenantEmail)
         )
           throw new Error("Email người thuê không hợp lệ");
-        if (action === "saveTenant" && old?.authUid && tenantEmail !== old.email)
+        if (
+          action === "saveTenant" &&
+          (old?.userId || old?.authUid) &&
+          tenantEmail !== String(old?.email || "").trim().toLowerCase()
+        )
           throw new Error(
             "Hồ sơ đã liên kết tài khoản. Không đổi email tại đây; hãy cập nhật email của tài khoản đã liên kết.",
           );
@@ -269,7 +278,8 @@ exports.manage = onCall({ timeoutSeconds: 120 }, async (req) => {
               note: text(d.note, "ghi chú", true),
               roomId,
               archived: false,
-              authUid: old?.authUid || "",
+              userId: old?.userId || old?.authUid || "",
+              authUid: old?.authUid || old?.userId || "",
               createdAt: old?.createdAt || stamp(),
               updatedAt: stamp(),
             },
@@ -782,6 +792,7 @@ exports.tenantPortal = onCall({ timeoutSeconds: 30 }, async (req) => {
         id: doc.id,
         name: doc.data().name || "",
         email: doc.data().email || "",
+        userId: doc.data().userId || doc.data().authUid || "",
         authUid: doc.data().authUid || "",
       })),
     };
@@ -813,13 +824,20 @@ exports.tenantPortal = onCall({ timeoutSeconds: 30 }, async (req) => {
             "permission-denied",
             "Email không khớp hồ sơ thuê đang hoạt động. Hãy nhờ chủ trọ kiểm tra email và phòng.",
           );
-        if (tenant.authUid && tenant.authUid !== uid)
+        if (
+          (tenant.userId && tenant.userId !== uid) ||
+          (tenant.authUid && tenant.authUid !== uid)
+        )
           throw new HttpsError(
             "failed-precondition",
             "Hồ sơ thuê này đã liên kết với một tài khoản khác. Hãy liên hệ chủ trọ.",
           );
         tenantName = tenant.name || "";
-        tx.update(tenantRef, { authUid: uid, updatedAt: stamp() });
+        tx.update(tenantRef, {
+          userId: uid,
+          authUid: uid,
+          updatedAt: stamp(),
+        });
       });
     } catch (error) {
       if (error instanceof HttpsError) throw error;
@@ -834,11 +852,17 @@ exports.tenantPortal = onCall({ timeoutSeconds: 30 }, async (req) => {
   if (action !== "load" && action !== "createMaintenance")
     throw new HttpsError("invalid-argument", "Thao tác không được hỗ trợ.");
 
-  const profiles = await db
-    .collection("tenants")
-    .where("authUid", "==", uid)
-    .get();
-  const linked = profiles.docs.filter((doc) => !doc.data().archived);
+  const [byUserId, byAuthUid] = await Promise.all([
+    db.collection("tenants").where("userId", "==", uid).get(),
+    db.collection("tenants").where("authUid", "==", uid).get(),
+  ]);
+  const linkedMap = new Map();
+  for (const snap of [byUserId, byAuthUid]) {
+    for (const doc of snap.docs) {
+      if (!doc.data().archived) linkedMap.set(doc.id, doc);
+    }
+  }
+  const linked = [...linkedMap.values()];
   if (linked.length !== 1)
     throw new HttpsError(
       "failed-precondition",
@@ -879,7 +903,7 @@ exports.tenantPortal = onCall({ timeoutSeconds: 30 }, async (req) => {
         currentRoomData = currentRoom.data();
       if (
         !currentTenant.exists ||
-        current.authUid !== uid ||
+        (current.userId !== uid && current.authUid !== uid) ||
         current.archived ||
         current.roomId !== roomId ||
         !currentRoom.exists ||

@@ -690,6 +690,20 @@ class ContractDetailPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 12),
+                        if (canEnd && tenant != null && room != null) ...[
+                          _actionButton(
+                            label: 'Chuyển phòng',
+                            color: const Color(0xFF0284C7),
+                            onTap: () => showRoomTransferDialog(
+                              context,
+                              tenantId: tenant.id,
+                              tenantName: tenant.name,
+                              currentRoomId: room.id,
+                              currentRoomName: room.name,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         if (canEnd) ...[
                           _actionButton(
                             label: 'Kết thúc / Thanh lý hợp đồng',

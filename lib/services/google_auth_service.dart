@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -14,7 +16,7 @@ class GoogleAuthService {
     try {
       await (_initFuture ??= GoogleSignIn.instance.initialize(
         serverClientId: _serverClientId,
-      ));
+      )).timeout(const Duration(seconds: 10));
     } catch (_) {
       _initFuture = null;
       rethrow;
@@ -24,7 +26,14 @@ class GoogleAuthService {
   /// Mở hộp thoại chọn tài khoản Google và đăng nhập Firebase Auth.
   /// Trả về `null` nếu người dùng đóng hộp thoại / hủy đăng nhập.
   static Future<UserCredential?> signInWithGoogle() async {
-    await ensureInitialized();
+    try {
+      await ensureInitialized();
+    } on TimeoutException {
+      throw StateError(
+        'Không khởi tạo được Google Play Services kịp thời. Vui lòng thử lại.',
+      );
+    }
+
     if (!GoogleSignIn.instance.supportsAuthenticate()) {
       throw StateError(
         'Nền tảng này chưa hỗ trợ đăng nhập Google trực tiếp.',
@@ -33,8 +42,13 @@ class GoogleAuthService {
 
     final GoogleSignInAccount account;
     try {
-      account = await GoogleSignIn.instance.authenticate(
-        scopeHint: const ['email', 'profile'],
+      account = await GoogleSignIn.instance
+          .authenticate()
+          .timeout(const Duration(seconds: 60));
+    } on TimeoutException {
+      throw StateError(
+        'Google Play Services phản hồi quá lâu (thường gặp khi dịch vụ Google trên máy ảo bị nghẽn). '
+        'Hãy nhấn nút Back để đóng hộp thoại Google rồi bấm đăng nhập lại.',
       );
     } on GoogleSignInException catch (e) {
       if (e.code == GoogleSignInExceptionCode.canceled ||
@@ -61,21 +75,16 @@ class GoogleAuthService {
       );
     }
 
-    String? accessToken;
+    final credential = GoogleAuthProvider.credential(idToken: idToken);
     try {
-      final authz = await account.authorizationClient.authorizationForScopes(
-        const ['email', 'profile'],
+      return await FirebaseAuth.instance
+          .signInWithCredential(credential)
+          .timeout(const Duration(seconds: 25));
+    } on TimeoutException {
+      throw StateError(
+        'Kết nối xác thực Firebase quá thời gian chờ. Vui lòng kiểm tra mạng và thử lại.',
       );
-      accessToken = authz?.accessToken;
-    } catch (_) {
-      // Firebase Auth chỉ cần idToken khi xác thực bằng Google trên Android.
     }
-
-    final credential = GoogleAuthProvider.credential(
-      idToken: idToken,
-      accessToken: accessToken,
-    );
-    return FirebaseAuth.instance.signInWithCredential(credential);
   }
 
   /// Đăng xuất khỏi cả Firebase Auth và phiên Google Sign-In.
@@ -85,7 +94,9 @@ class GoogleAuthService {
     } finally {
       try {
         await ensureInitialized();
-        await GoogleSignIn.instance.signOut();
+        await GoogleSignIn.instance
+            .signOut()
+            .timeout(const Duration(seconds: 5));
       } catch (_) {
         // Bỏ qua nếu thiết bị không có Google Play Services hoặc chưa đăng nhập Google.
       }

@@ -159,6 +159,8 @@ class AccountPage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            const ManagerInviteCodeBanner(),
+            const SizedBox(height: 16),
 
             if (onSwitchToTenant != null) ...[
               Container(

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -16,7 +18,8 @@ Future<void> main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    await GoogleAuthService.signOut();
+    // Khởi tạo sẵn GoogleSignIn mà KHÔNG đăng xuất phiên hiện tại.
+    unawaited(GoogleAuthService.ensureInitialized().catchError((_) {}));
 
     runApp(const MyApp());
   } catch (e) {

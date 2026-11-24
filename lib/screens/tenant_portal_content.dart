@@ -84,6 +84,7 @@ class TenantPortalContent extends StatelessWidget {
           room: room,
           landlord: landlord,
           isLandlordAccount: isLandlordAccount,
+          onRefresh: onRefresh,
           onSwitchToLandlord: onSwitchToLandlord,
           onUpgradeToLandlord: onUpgradeToLandlord,
         );
@@ -1293,6 +1294,7 @@ class _TenantMaintenanceFormState extends State<_TenantMaintenanceForm> {
 class _TenantAccount extends StatelessWidget {
   final Map<String, dynamic> tenant, room, landlord;
   final bool isLandlordAccount;
+  final VoidCallback onRefresh;
   final VoidCallback? onSwitchToLandlord;
   final VoidCallback? onUpgradeToLandlord;
   const _TenantAccount({
@@ -1300,9 +1302,26 @@ class _TenantAccount extends StatelessWidget {
     required this.room,
     required this.landlord,
     required this.isLandlordAccount,
+    required this.onRefresh,
     this.onSwitchToLandlord,
     this.onUpgradeToLandlord,
   });
+
+  Future<void> _openEnterInviteDialog(BuildContext context) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => const _EnterInviteCodeDialog(),
+    );
+    if (result == null || !context.mounted) return;
+    onRefresh();
+    final roomName = '${result['roomName'] ?? ''}'.trim();
+    message(
+      context,
+      roomName.isNotEmpty
+          ? 'Đã tham gia $roomName thành công!'
+          : 'Đã cập nhật phòng thuê thành công!',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1418,6 +1437,33 @@ class _TenantAccount extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
+                'Mã mời dãy trọ',
+                style: TextStyle(
+                  color: ink,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                'Bạn đang liên kết với ${'${room['name'] ?? ''}'.isEmpty ? 'phòng hiện tại' : room['name']}. Nếu chuyển sang dãy trọ khác hoặc cần đối chiếu lại phòng sau khi chủ trọ cũ kết thúc hồ sơ, hãy nhập mã mời mới tại đây.',
+                style: const TextStyle(color: muted, fontSize: 11.5),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => _openEnterInviteDialog(context),
+                icon: const Icon(Icons.vpn_key_outlined, size: 18),
+                label: const Text('Nhập mã mời dãy trọ khác'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        _portalCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
                 'Bảo mật tài khoản',
                 style: TextStyle(
                   color: ink,
@@ -1453,6 +1499,113 @@ class _TenantAccount extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EnterInviteCodeDialog extends StatefulWidget {
+  const _EnterInviteCodeDialog();
+
+  @override
+  State<_EnterInviteCodeDialog> createState() => _EnterInviteCodeDialogState();
+}
+
+class _EnterInviteCodeDialogState extends State<_EnterInviteCodeDialog> {
+  final controller = TextEditingController();
+  bool busy = false;
+  String? error;
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (busy) return;
+    final code = controller.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      setState(() => error = 'Vui lòng nhập mã mời từ chủ trọ');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final result = await store.joinRoomByInviteCode(code);
+      if (mounted) Navigator.pop(context, result);
+    } catch (e) {
+      if (mounted) setState(() => error = errorText(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final email = FirebaseAuth.instance.currentUser?.email ?? '';
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: const Text(
+        'Nhập mã mời dãy trọ',
+        style: TextStyle(color: ink, fontSize: 17, fontWeight: FontWeight.w700),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Hệ thống sẽ đối chiếu email $email với danh sách người thuê thuộc dãy trọ của mã mời.',
+            style: const TextStyle(color: muted, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            textCapitalization: TextCapitalization.characters,
+            enabled: !busy,
+            style: const TextStyle(
+              color: ink,
+              fontSize: 16,
+              letterSpacing: 3,
+              fontWeight: FontWeight.w700,
+            ),
+            onChanged: (_) {
+              if (error != null) setState(() => error = null);
+            },
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              hintText: 'Nhập mã mời (VD: A7K92P)',
+              hintStyle: const TextStyle(
+                color: muted,
+                fontSize: 13,
+                letterSpacing: 0,
+                fontWeight: FontWeight.w400,
+              ),
+              prefixIcon: const Icon(Icons.vpn_key_outlined, color: blue),
+              errorText: error,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: busy ? null : () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        FilledButton(
+          onPressed: busy ? null : _submit,
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(110, 40),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          child: Text(busy ? 'Đang kiểm tra...' : 'Xác nhận'),
         ),
       ],
     );

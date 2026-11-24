@@ -72,10 +72,7 @@ class _RegisterPageState extends State<RegisterPage> {
     final normalizedPhone = phone.text.trim();
     final normalizedEmail = contact.text.trim().toLowerCase();
     final rawInvite = role == RegisterRole.tenant
-        ? inviteCode.text.trim().toUpperCase().replaceAll(
-            RegExp(r'[^A-Z0-9]'),
-            '',
-          )
+        ? inviteCode.text.trim().toUpperCase()
         : '';
     setState(() {
       emailAuthError = null;
@@ -99,17 +96,12 @@ class _RegisterPageState extends State<RegisterPage> {
       await user.getIdToken(true);
       if (role == RegisterRole.landlord) {
         try {
-          await FirebaseFirestore.instance
-              .collection('managers')
-              .doc(user.uid)
-              .set({
-                'enabled': true,
-                'role': 'landlord',
-                'name': displayName,
-                'email': normalizedEmail,
-                'phone': normalizedPhone,
-                'createdAt': FieldValue.serverTimestamp(),
-              });
+          await store.createManagerAccount(
+            uid: user.uid,
+            name: displayName,
+            email: normalizedEmail,
+            phone: normalizedPhone,
+          );
           try {
             await FirebaseFirestore.instance
                 .collection('settings')
@@ -138,11 +130,7 @@ class _RegisterPageState extends State<RegisterPage> {
         }
       } else if (rawInvite.isNotEmpty) {
         try {
-          final joined = await store.joinRoomByInviteCode(
-            rawInvite,
-            displayName: displayName,
-            phone: normalizedPhone,
-          );
+          final joined = await store.joinRoomByInviteCode(rawInvite);
           joinedRoomName = '${joined['roomName'] ?? ''}';
         } catch (e) {
           try {
@@ -153,7 +141,7 @@ class _RegisterPageState extends State<RegisterPage> {
           if (!mounted) return;
           setState(() {
             inviteAuthError = e is FirebaseException && e.code == 'permission-denied'
-                ? 'Chưa triển khai firestore.rules cho mã mời phòng.'
+                ? 'Chưa triển khai firestore.rules cho mã mời dãy trọ.'
                 : errorText(e);
           });
           formKey.currentState?.validate();
@@ -357,7 +345,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   child: Text(
                     selectedRole == RegisterRole.landlord
                         ? 'Tài khoản Chủ trọ có quyền quản lý phòng, hợp đồng, hóa đơn và khách thuê.'
-                        : 'Nhập mã mời 6 ký tự từ chủ trọ để tự động vào đúng phòng ngay khi tạo tài khoản.',
+                        : 'Nhập mã mời từ chủ trọ để tự động đối chiếu email và vào đúng phòng ngay khi tạo tài khoản.',
                     style: const TextStyle(
                       color: Color(0xFF475569),
                       fontSize: 11.5,
@@ -410,13 +398,10 @@ class _RegisterPageState extends State<RegisterPage> {
                   onChanged: (_) => setState(() => inviteAuthError = null),
                   validator: (v) {
                     if (inviteAuthError != null) return inviteAuthError;
-                    final cleaned = (v ?? '')
-                        .trim()
-                        .toUpperCase()
-                        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+                    final cleaned = (v ?? '').trim().toUpperCase();
                     if (cleaned.isEmpty) return null;
-                    if (cleaned.length != 6) {
-                      return 'Mã mời gồm đúng 6 ký tự chữ và số';
+                    if (!RegExp(r'^[A-Z0-9]{6,8}$').hasMatch(cleaned)) {
+                      return 'Mã mời gồm 6–8 ký tự chữ và số';
                     }
                     return null;
                   },

@@ -48,6 +48,8 @@ class NotificationPage extends StatelessWidget {
                 Builder(
                   builder: (context) {
                     final isRead = readIds.contains(n.id);
+                    final isTransferNotice =
+                        !landlord && n.text('type') == 'room_transfer';
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       decoration: BoxDecoration(
@@ -63,6 +65,15 @@ class NotificationPage extends StatelessWidget {
                       child: InkWell(
                         borderRadius: BorderRadius.circular(16),
                         onTap: () async {
+                          if (isTransferNotice) {
+                            await perform(
+                              context,
+                              () => store.confirmRoomTransfer(noticeId: n.id),
+                              'Đã xác nhận chuyển phòng thành công!',
+                            );
+                            if (context.mounted) Navigator.maybePop(context);
+                            return;
+                          }
                           try {
                             await store.markRead(n.id);
                           } catch (e) {
@@ -107,7 +118,9 @@ class NotificationPage extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
-                                  isRead
+                                  isTransferNotice
+                                      ? Icons.swap_horiz_rounded
+                                      : isRead
                                       ? Icons.notifications_none_rounded
                                       : Icons.mark_email_unread_outlined,
                                   color: isRead ? muted : blue,
@@ -152,6 +165,42 @@ class NotificationPage extends StatelessWidget {
                                         fontSize: 12,
                                       ),
                                     ),
+                                    if (isTransferNotice && !isRead) ...[
+                                      const SizedBox(height: 10),
+                                      FilledButton.icon(
+                                        onPressed: () async {
+                                          await perform(
+                                            context,
+                                            () => store.confirmRoomTransfer(
+                                              noticeId: n.id,
+                                            ),
+                                            'Đã xác nhận chuyển phòng thành công!',
+                                          );
+                                          if (context.mounted) {
+                                            Navigator.maybePop(context);
+                                          }
+                                        },
+                                        style: FilledButton.styleFrom(
+                                          minimumSize: const Size(0, 36),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.check_circle_outline_rounded,
+                                          size: 16,
+                                        ),
+                                        label: const Text(
+                                          'Xác nhận chuyển phòng',
+                                          style: TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                    ],
                                     const SizedBox(height: 5),
                                     Text(
                                       n

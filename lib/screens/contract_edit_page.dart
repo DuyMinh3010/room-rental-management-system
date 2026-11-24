@@ -383,14 +383,14 @@ class _ContractEditPageState extends State<ContractEditPage> {
                   'name': t.name.text.trim(),
                   'role': t.role,
                   'phone': t.phone.text.trim(),
-                  'email': t.email.text.trim(),
+                  'email': t.email.text.trim().toLowerCase(),
                   'identity': t.identity.text.trim(),
                 },
             ]
           : const [],
       'tenantContact': {
         'phone': _phoneCtrl.text.trim(),
-        'email': _emailCtrl.text.trim(),
+        'email': _emailCtrl.text.trim().toLowerCase(),
         'identity': _identityCtrl.text.trim(),
       },
       'existingMemberIds': _existingMemberIds
@@ -590,13 +590,21 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                   effectiveServiceIds.contains(s.id),
                             )
                             .toList();
+                  final contractMemberIds = widget.contract == null
+                      ? const <String>{}
+                      : {
+                          widget.contract!.text('tenantId'),
+                          ...widget.contract!.strings('tenantIds'),
+                        }..removeWhere((id) => id.isEmpty);
                   final roomTenants = selectedRoom == null
                       ? const <Record>[]
                       : ts
                             .where(
                               (t) =>
                                   !t.archived &&
-                                  t.text('roomId') == selectedRoom.id,
+                                  (t.text('roomId') == selectedRoom.id ||
+                                      (isEdit &&
+                                          contractMemberIds.contains(t.id))),
                             )
                             .toList();
                   final needsExistingTenant = isEdit || _useExistingTenant;
@@ -690,11 +698,15 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               final room = rooms
                                   .where((r) => r.id == v)
                                   .firstOrNull;
-                              _setContact(null);
+                              if (!isEdit) {
+                                _setContact(null);
+                              }
                               setState(() {
                                 _roomId = v;
-                                _tenantId = null;
-                                _existingMemberIds.clear();
+                                if (!isEdit) {
+                                  _tenantId = null;
+                                  _existingMemberIds.clear();
+                                }
                                 _serviceIds = room
                                     ?.strings('serviceIds')
                                     .toSet();

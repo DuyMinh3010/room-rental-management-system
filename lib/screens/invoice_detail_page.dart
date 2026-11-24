@@ -951,13 +951,45 @@ class InvoiceDetailPage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Chi tiết khoản phí',
-                        style: TextStyle(
-                          color: ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Chi tiết khoản phí',
+                              style: TextStyle(
+                                color: ink,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          if (canLandlordConfirm)
+                            TextButton.icon(
+                              onPressed: () => perform(
+                                context,
+                                () => store.command(
+                                  'recalculateInvoice',
+                                  id: invoiceId,
+                                ),
+                                'Đã tự tính lại các khoản phí theo dữ liệu phòng mới nhất',
+                              ),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                              ),
+                              icon: const Icon(Icons.refresh_rounded, size: 16),
+                              label: const Text(
+                                'Tự tính lại',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 14),
                       for (final row in lines)
