@@ -59,8 +59,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
   late final TextEditingController _endCtrl;
   late final TextEditingController _rentCtrl;
   late final TextEditingController _depositCtrl;
-  late final TextEditingController _initialElectricCtrl;
-  late final TextEditingController _initialWaterCtrl;
+  final Map<String, TextEditingController> _initialMeterCtrls = {};
   late final TextEditingController _noteCtrl;
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
@@ -120,16 +119,6 @@ class _ContractEditPageState extends State<ContractEditPage> {
           ? '${c!.number('deposit')!.round()}'
           : '',
     );
-    _initialElectricCtrl = TextEditingController(
-      text: c?.number('initialElectric') != null
-          ? '${c!.number('initialElectric')}'
-          : '0',
-    );
-    _initialWaterCtrl = TextEditingController(
-      text: c?.number('initialWater') != null
-          ? '${c!.number('initialWater')}'
-          : '0',
-    );
     _noteCtrl = TextEditingController(text: c?.text('note') ?? '');
     if (c != null) _didPrefillRoomPricing = true;
   }
@@ -141,8 +130,9 @@ class _ContractEditPageState extends State<ContractEditPage> {
     _endCtrl.dispose();
     _rentCtrl.dispose();
     _depositCtrl.dispose();
-    _initialElectricCtrl.dispose();
-    _initialWaterCtrl.dispose();
+    for (final ctrl in _initialMeterCtrls.values) {
+      ctrl.dispose();
+    }
     _noteCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
@@ -204,12 +194,65 @@ class _ContractEditPageState extends State<ContractEditPage> {
     _identityCtrl.text = tenant?.text('identity') ?? '';
   }
 
-  void _applyRoomDefaults(Record? room) {
+  void _applyRoomDefaults(Record? room, {List<Record> services = const []}) {
     if (room == null) return;
     _rentCtrl.text = '${(room.number('price') ?? 0).round()}';
     _depositCtrl.text = '${(room.number('deposit') ?? 0).round()}';
-    _initialElectricCtrl.text = '${room.number('initialElectric') ?? 0}';
-    _initialWaterCtrl.text = '${room.number('initialWater') ?? 0}';
+    for (final s in services) {
+      if (s.text('mode') != 'meter') continue;
+      final val = _initialReadingValue(s, room: room);
+      final ctrl = _initialMeterCtrls[s.id];
+      if (ctrl != null) {
+        ctrl.text = '$val';
+      } else {
+        _initialMeterCtrls[s.id] = TextEditingController(text: '$val');
+      }
+    }
+  }
+
+  num _initialReadingValue(
+    Record service, {
+    Record? room,
+    Record? contract,
+  }) {
+    final sName = service.name.toLowerCase();
+    final isElectric = sName.contains('điện') || sName.contains('dien');
+    final isWater = sName.contains('nước') || sName.contains('nuoc');
+
+    if (contract != null) {
+      final cMeters = contract.data['initialMeters'];
+      if (cMeters is Map && cMeters[service.id] is num) {
+        return cMeters[service.id] as num;
+      }
+      if (isElectric && contract.number('initialElectric') != null) {
+        return contract.number('initialElectric')!;
+      }
+      if (isWater && contract.number('initialWater') != null) {
+        return contract.number('initialWater')!;
+      }
+    }
+    if (room != null) {
+      final rMeters = room.data['initialMeters'];
+      if (rMeters is Map && rMeters[service.id] is num) {
+        return rMeters[service.id] as num;
+      }
+      if (isElectric && room.number('initialElectric') != null) {
+        return room.number('initialElectric')!;
+      }
+      if (isWater && room.number('initialWater') != null) {
+        return room.number('initialWater')!;
+      }
+    }
+    return 0;
+  }
+
+  TextEditingController _meterCtrlFor(Record service, {Record? room}) {
+    return _initialMeterCtrls.putIfAbsent(
+      service.id,
+      () => TextEditingController(
+        text: '${_initialReadingValue(service, room: room, contract: widget.contract)}',
+      ),
+    );
   }
 
   Widget _contactField(String label, TextEditingController controller) =>
@@ -253,7 +296,10 @@ class _ContractEditPageState extends State<ContractEditPage> {
     }
   }
 
-  Future<void> _save(Set<String> occupiedRoomIds) async {
+  Future<void> _save(
+    Set<String> occupiedRoomIds,
+    List<Record> selectedMeterServices,
+  ) async {
     if (_saving || !_formKey.currentState!.validate()) return;
     if (_roomId == null || _roomId!.isEmpty) {
       message(context, 'Vui lòng chọn phòng');
@@ -293,12 +339,6 @@ class _ContractEditPageState extends State<ContractEditPage> {
     final deposit = num.tryParse(
       _depositCtrl.text.trim().replaceAll('.', '').replaceAll(',', ''),
     );
-    final initialElectric = num.tryParse(
-      _initialElectricCtrl.text.trim().replaceAll(',', '.'),
-    );
-    final initialWater = num.tryParse(
-      _initialWaterCtrl.text.trim().replaceAll(',', '.'),
-    );
     if (rent == null || rent <= 0) {
       message(context, 'Tiền phòng không hợp lệ');
       return;
@@ -307,13 +347,27 @@ class _ContractEditPageState extends State<ContractEditPage> {
       message(context, 'Tiền đặt cọc không hợp lệ');
       return;
     }
-    if (initialElectric == null || initialElectric < 0) {
-      message(context, 'Chỉ số điện ban đầu không hợp lệ');
-      return;
-    }
-    if (initialWater == null || initialWater < 0) {
-      message(context, 'Chỉ số nước ban đầu không hợp lệ');
-      return;
+    final initialMeters = <String, num>{};
+    num? initialElectric;
+    num? initialWater;
+    for (final svc in selectedMeterServices) {
+      final raw = (_initialMeterCtrls[svc.id]?.text ?? '0')
+          .trim()
+          .replaceAll(',', '.');
+      final val = num.tryParse(raw);
+      if (val == null || val < 0) {
+        message(context, 'Chỉ số ${svc.name} ban đầu không hợp lệ');
+        return;
+      }
+      initialMeters[svc.id] = val;
+      final sName = svc.name.toLowerCase();
+      if ((sName.contains('điện') || sName.contains('dien')) &&
+          initialElectric == null) {
+        initialElectric = val;
+      } else if ((sName.contains('nước') || sName.contains('nuoc')) &&
+          initialWater == null) {
+        initialWater = val;
+      }
     }
 
     final data = <String, dynamic>{
@@ -329,14 +383,14 @@ class _ContractEditPageState extends State<ContractEditPage> {
                   'name': t.name.text.trim(),
                   'role': t.role,
                   'phone': t.phone.text.trim(),
-                  'email': t.email.text.trim(),
+                  'email': t.email.text.trim().toLowerCase(),
                   'identity': t.identity.text.trim(),
                 },
             ]
           : const [],
       'tenantContact': {
         'phone': _phoneCtrl.text.trim(),
-        'email': _emailCtrl.text.trim(),
+        'email': _emailCtrl.text.trim().toLowerCase(),
         'identity': _identityCtrl.text.trim(),
       },
       'existingMemberIds': _existingMemberIds
@@ -348,8 +402,9 @@ class _ContractEditPageState extends State<ContractEditPage> {
       'endDate': _normalizeDateInput(_endCtrl.text),
       'rent': rent.round(),
       'deposit': deposit.round(),
-      'initialElectric': initialElectric,
-      'initialWater': initialWater,
+      'initialMeters': initialMeters,
+      'initialElectric': ?initialElectric,
+      'initialWater': ?initialWater,
       'note': _noteCtrl.text.trim(),
     };
     setState(() => _saving = true);
@@ -503,24 +558,53 @@ class _ContractEditPageState extends State<ContractEditPage> {
                   final selectedRoom = rooms
                       .where((r) => r.id == _roomId)
                       .firstOrNull;
+                  final activeServices =
+                      services.where((s) => !s.archived).toList()
+                        ..sort((a, b) => a.name.compareTo(b.name));
                   if (!_didPrefillRoomPricing && selectedRoom != null) {
                     _didPrefillRoomPricing = true;
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (mounted) {
-                        setState(() => _applyRoomDefaults(selectedRoom));
+                        setState(
+                          () => _applyRoomDefaults(
+                            selectedRoom,
+                            services: activeServices,
+                          ),
+                        );
                       }
                     });
                   }
                   if (_serviceIds == null && selectedRoom != null) {
                     _serviceIds = selectedRoom.strings('serviceIds').toSet();
                   }
+                  final effectiveServiceIds =
+                      _serviceIds ??
+                      selectedRoom?.strings('serviceIds').toSet() ??
+                      const <String>{};
+                  final selectedMeterServices = selectedRoom == null
+                      ? const <Record>[]
+                      : activeServices
+                            .where(
+                              (s) =>
+                                  s.text('mode') == 'meter' &&
+                                  effectiveServiceIds.contains(s.id),
+                            )
+                            .toList();
+                  final contractMemberIds = widget.contract == null
+                      ? const <String>{}
+                      : {
+                          widget.contract!.text('tenantId'),
+                          ...widget.contract!.strings('tenantIds'),
+                        }..removeWhere((id) => id.isEmpty);
                   final roomTenants = selectedRoom == null
                       ? const <Record>[]
                       : ts
                             .where(
                               (t) =>
                                   !t.archived &&
-                                  t.text('roomId') == selectedRoom.id,
+                                  (t.text('roomId') == selectedRoom.id ||
+                                      (isEdit &&
+                                          contractMemberIds.contains(t.id))),
                             )
                             .toList();
                   final needsExistingTenant = isEdit || _useExistingTenant;
@@ -614,15 +698,22 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               final room = rooms
                                   .where((r) => r.id == v)
                                   .firstOrNull;
-                              _setContact(null);
+                              if (!isEdit) {
+                                _setContact(null);
+                              }
                               setState(() {
                                 _roomId = v;
-                                _tenantId = null;
-                                _existingMemberIds.clear();
+                                if (!isEdit) {
+                                  _tenantId = null;
+                                  _existingMemberIds.clear();
+                                }
                                 _serviceIds = room
                                     ?.strings('serviceIds')
                                     .toSet();
-                                _applyRoomDefaults(room);
+                                _applyRoomDefaults(
+                                  room,
+                                  services: activeServices,
+                                );
                               });
                             },
                             validator: (v) {
@@ -1039,90 +1130,6 @@ class _ContractEditPageState extends State<ContractEditPage> {
                           ),
                         ),
 
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  formLabel(
-                                    'Chỉ số điện ban đầu (lúc làm hợp đồng)',
-                                    required: true,
-                                  ),
-                                  TextFormField(
-                                    controller: _initialElectricCtrl,
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                          decimal: true,
-                                        ),
-                                    style: const TextStyle(
-                                      color: ink,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    decoration: _boxDecoration(
-                                      hint: 'VD: 120 (kWh)',
-                                    ),
-                                    validator: (v) {
-                                      final n = num.tryParse(
-                                        (v ?? '').trim().replaceAll(',', '.'),
-                                      );
-                                      if (n == null || n < 0) {
-                                        return 'Nhập chỉ số điện >= 0';
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  formLabel(
-                                    'Chỉ số nước ban đầu (lúc làm hợp đồng)',
-                                    required: true,
-                                  ),
-                                  TextFormField(
-                                    controller: _initialWaterCtrl,
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                          decimal: true,
-                                        ),
-                                    style: const TextStyle(
-                                      color: ink,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    decoration: _boxDecoration(
-                                      hint: 'VD: 35 (m³)',
-                                    ),
-                                    validator: (v) {
-                                      final n = num.tryParse(
-                                        (v ?? '').trim().replaceAll(',', '.'),
-                                      );
-                                      if (n == null || n < 0) {
-                                        return 'Nhập chỉ số nước >= 0';
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6, bottom: 14),
-                          child: Text(
-                            'Chỉ số điện & nước ban đầu sẽ được lưu vào hợp đồng và phòng để làm mốc chỉ số cũ khi tính hóa đơn tháng đầu tiên.',
-                            style: TextStyle(color: muted, fontSize: 11.5),
-                          ),
-                        ),
-
                         const Padding(
                           padding: EdgeInsets.only(bottom: 8),
                           child: Text(
@@ -1134,7 +1141,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                             ),
                           ),
                         ),
-                        if (services.where((s) => !s.archived).isEmpty)
+                        if (activeServices.isEmpty)
                           const Padding(
                             padding: EdgeInsets.only(bottom: 14),
                             child: Text(
@@ -1142,9 +1149,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               style: TextStyle(color: muted, fontSize: 12),
                             ),
                           ),
-                        for (final service
-                            in services.where((s) => !s.archived).toList()
-                              ..sort((a, b) => a.name.compareTo(b.name)))
+                        for (final service in activeServices)
                           Container(
                             margin: const EdgeInsets.only(bottom: 6),
                             decoration: BoxDecoration(
@@ -1152,7 +1157,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: CheckboxListTile(
-                              value: (_serviceIds ?? {}).contains(service.id),
+                              value: effectiveServiceIds.contains(service.id),
                               activeColor: blue,
                               title: Text(
                                 service.name,
@@ -1171,9 +1176,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               ),
                               onChanged: (checked) => setState(() {
                                 final selected = Set<String>.from(
-                                  _serviceIds ??
-                                      selectedRoom?.strings('serviceIds') ??
-                                      const [],
+                                  effectiveServiceIds,
                                 );
                                 if (checked == true) {
                                   selected.add(service.id);
@@ -1184,7 +1187,65 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               }),
                             ),
                           ),
-                        const SizedBox(height: 8),
+                        if (selectedRoom != null &&
+                            selectedMeterServices.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              'Chỉ số dịch vụ ban đầu (lúc làm hợp đồng)',
+                              style: TextStyle(
+                                color: ink,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          for (final svc in selectedMeterServices) ...[
+                            formLabel(
+                              'Chỉ số ${svc.name} ban đầu (${svc.text('unit', 'đơn vị')})',
+                              required: true,
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: TextFormField(
+                                controller: _meterCtrlFor(
+                                  svc,
+                                  room: selectedRoom,
+                                ),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                style: const TextStyle(
+                                  color: ink,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                decoration: _boxDecoration(
+                                  hint: 'VD: 0 (${svc.text('unit', 'đơn vị')})',
+                                ),
+                                validator: (v) {
+                                  final n = num.tryParse(
+                                    (v ?? '').trim().replaceAll(',', '.'),
+                                  );
+                                  if (n == null || n < 0) {
+                                    return 'Nhập chỉ số ${svc.name} >= 0';
+                                  }
+                                  return null;
+                                },
+                              ),
+                            ),
+                          ],
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 14),
+                            child: Text(
+                              'Chỉ số ban đầu của các dịch vụ tính theo chỉ số sẽ được lưu vào hợp đồng và phòng để làm mốc chỉ số cũ khi tính hóa đơn tháng đầu tiên.',
+                              style: TextStyle(color: muted, fontSize: 11.5),
+                            ),
+                          ),
+                        ] else
+                          const SizedBox(height: 8),
                         formLabel('Ghi chú hợp đồng'),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 22),
@@ -1192,7 +1253,9 @@ class _ContractEditPageState extends State<ContractEditPage> {
                             controller: _noteCtrl,
                             maxLines: 3,
                             style: const TextStyle(color: ink, fontSize: 14),
-                            decoration: _boxDecoration(hint: 'Ghi chú điều khoản...'),
+                            decoration: _boxDecoration(
+                              hint: 'Ghi chú điều khoản...',
+                            ),
                           ),
                         ),
                         SizedBox(
@@ -1200,7 +1263,10 @@ class _ContractEditPageState extends State<ContractEditPage> {
                           child: FilledButton(
                             onPressed: _saving
                                 ? null
-                                : () => _save(occupiedRoomIds),
+                                : () => _save(
+                                    occupiedRoomIds,
+                                    selectedMeterServices,
+                                  ),
                             style: FilledButton.styleFrom(
                               backgroundColor: blue,
                               foregroundColor: Colors.white,

@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/google_auth_service.dart';
 import '../widgets/common.dart';
 import 'notification_page.dart';
 
@@ -158,6 +159,8 @@ class AccountPage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            const ManagerInviteCodeBanner(),
+            const SizedBox(height: 16),
 
             if (onSwitchToTenant != null) ...[
               Container(
@@ -297,7 +300,7 @@ class AccountPage extends StatelessWidget {
                     showDivider: false,
                     onTap: () async {
                       preferredLandlordMode.value = null;
-                      await FirebaseAuth.instance.signOut();
+                      await GoogleAuthService.signOut();
                     },
                   ),
                 ],

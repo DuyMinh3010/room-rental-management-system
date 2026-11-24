@@ -50,25 +50,6 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
     }
   }
 
-  Future<void> _preview() async {
-    if (roomId == null) {
-      message(context, 'Vui lòng chọn phòng trước');
-      return;
-    }
-    await perform(context, () async {
-      final data = await store.command(
-        'previewInvoice',
-        args: {'roomId': roomId, 'period': period},
-      );
-      if (mounted) {
-        setState(() {
-          preview = data;
-          previewNote = null;
-        });
-      }
-    }, 'Đã tính hóa đơn từ dữ liệu Firebase');
-  }
-
   Future<void> _issue() async {
     if (roomId == null) {
       message(context, 'Vui lòng chọn phòng cần tạo hóa đơn');
@@ -348,36 +329,18 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Chi tiết hóa đơn dự kiến',
-                          style: TextStyle(
-                            color: ink,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      if (roomId != null)
-                        GestureDetector(
-                          onTap: _preview,
-                          child: const Text(
-                            'Tự tính lại',
-                            style: TextStyle(
-                              color: blue,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                    ],
+                  const Text(
+                    'Chi tiết hóa đơn dự kiến',
+                    style: TextStyle(
+                      color: ink,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   if (roomId == null)
                     const Text(
-                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch. Nếu hóa đơn trước đó đã bị hủy hoặc xóa, bạn vẫn có thể tạo lại hóa đơn mới cho cùng kỳ.',
+                      'Chọn phòng để tự động tính tiền phòng, điện nước và dịch vụ. Nếu hóa đơn trước đó đã bị hủy hoặc xóa, bạn vẫn có thể tạo lại hóa đơn mới cho cùng kỳ.',
                       style: TextStyle(color: muted, fontSize: 12),
                     )
                   else if (loadingPreview)
@@ -388,7 +351,7 @@ class _InvoiceCreatePageState extends State<InvoiceCreatePage> {
                   else if (preview == null)
                     Text(
                       previewNote ??
-                          'Bấm "Tự tính lại" để xem trước chi tiết hóa đơn.',
+                          'Không thể tính trước chi tiết hóa đơn cho phòng này.',
                       style: const TextStyle(
                         color: Color(0xFFD97706),
                         fontSize: 12,

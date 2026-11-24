@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/record.dart';
 import '../widgets/common.dart';
+import 'contract_edit_page.dart';
 import 'invoice_detail_page.dart';
 import 'room_edit_page.dart';
 import 'service_page.dart';
@@ -17,89 +18,92 @@ class RoomDetailPage extends StatelessWidget {
   Widget build(BuildContext context) => DocumentView(
     collection: 'rooms',
     id: roomId,
-    builder: (room) => DefaultTabController(
-      length: 4,
-      child: Scaffold(
-        backgroundColor: canvas,
-        appBar: AppBar(
-          backgroundColor: canvas,
-          leading: IconButton(
-            icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
-            onPressed: () => Navigator.pop(context),
-          ),
-          titleSpacing: 0,
-          title: Text(
-            room.name,
-            style: const TextStyle(
-              color: ink,
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
+    builder: (room) => RecordsView(
+      collection: 'contracts',
+      field: 'roomId',
+      equals: roomId,
+      builder: (_, contracts) {
+        final day = todayVi();
+        final isRented = contracts.any((c) => isContractEffective(c, day));
+        return DefaultTabController(
+          length: 4,
+          child: Scaffold(
+            backgroundColor: canvas,
+            appBar: AppBar(
+              backgroundColor: canvas,
+              leading: IconButton(
+                icon: const Icon(
+                  Icons.chevron_left_rounded,
+                  size: 30,
+                  color: ink,
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
+              titleSpacing: 0,
+              title: Text(
+                room.name,
+                style: const TextStyle(
+                  color: ink,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              actions: [
+                Tooltip(
+                  message: isRented
+                      ? 'Xem mã mời vào ${room.name}'
+                      : 'Phòng chưa có hợp đồng nên chưa thể mời người thuê',
+                  child: TextButton.icon(
+                    onPressed: isRented
+                        ? () => _showRoomInviteDialog(context, roomId, room.name)
+                        : null,
+                    icon: const Icon(Icons.vpn_key_outlined, size: 18),
+                    label: const Text('Mã mời', style: TextStyle(fontSize: 12.5)),
+                  ),
+                ),
+                moreActionsMenu(
+                  iconColor: ink,
+                  onEdit: () => openPage(context, RoomEditPage(room: room)),
+                  onDelete: () async {
+                    if (await confirm(
+                          context,
+                          'Xóa / lưu trữ phòng ${room.name}? Lịch sử hóa đơn vẫn được giữ.',
+                        ) &&
+                        context.mounted) {
+                      await perform(
+                        context,
+                        () => store.command('archiveRoom', id: roomId),
+                        'Đã xóa phòng',
+                      );
+                      if (context.mounted) Navigator.pop(context);
+                    }
+                  },
+                ),
+                const SizedBox(width: 6),
+              ],
+              bottom: const TabBar(
+                isScrollable: false,
+                indicatorSize: TabBarIndicatorSize.label,
+                indicatorWeight: 2.2,
+                tabs: [
+                  Tab(text: 'Tổng quan'),
+                  Tab(text: 'Người thuê'),
+                  Tab(text: 'Dịch vụ'),
+                  Tab(text: 'Hóa đơn'),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () =>
-                  _showRoomInviteDialog(context, roomId, room.name),
-              icon: const Icon(Icons.vpn_key_outlined, size: 18),
-              label: const Text('Mã mời', style: TextStyle(fontSize: 12.5)),
-            ),
-            moreActionsMenu(
-              iconColor: ink,
-              onEdit: () => openPage(context, RoomEditPage(room: room)),
-              onDelete: () async {
-                if (await confirm(
-                      context,
-                      'Xóa / lưu trữ phòng ${room.name}? Lịch sử hóa đơn vẫn được giữ.',
-                    ) &&
-                    context.mounted) {
-                  await perform(
-                    context,
-                    () => store.command('archiveRoom', id: roomId),
-                    'Đã xóa phòng',
-                  );
-                  if (context.mounted) Navigator.pop(context);
-                }
-              },
-            ),
-            const SizedBox(width: 6),
-          ],
-          bottom: const TabBar(
-            isScrollable: false,
-            indicatorSize: TabBarIndicatorSize.label,
-            indicatorWeight: 2.2,
-            tabs: [
-              Tab(text: 'Tổng quan'),
-              Tab(text: 'Người thuê'),
-              Tab(text: 'Dịch vụ'),
-              Tab(text: 'Hóa đơn'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            // TAB 1: Tổng quan
-            RecordsView(
-              collection: 'contracts',
-              field: 'roomId',
-              equals: roomId,
-              builder: (_, contracts) {
-                final day = DateTime.now()
-                    .toUtc()
-                    .add(const Duration(hours: 7))
-                    .toIso8601String()
-                    .substring(0, 10);
-                final isRented = contracts.any(
-                  (c) =>
-                      !c.archived &&
-                      ['active', 'scheduled'].contains(c.text('status')) &&
-                      c.text('endDate').compareTo(day) >= 0,
-                );
-                final statusLabel = room.condition == 'Đang sửa'
-                    ? 'Đang sửa'
-                    : isRented
-                    ? 'Đang có người'
-                    : 'Trống';
-                final hasPhotos = room.strings('imageUrls').isNotEmpty;
+            body: TabBarView(
+              children: [
+                // TAB 1: Tổng quan
+                Builder(
+                  builder: (_) {
+                    final statusLabel = room.condition == 'Đang sửa'
+                        ? 'Đang sửa'
+                        : isRented
+                        ? 'Đang có người'
+                        : 'Trống';
+                    final hasPhotos = room.strings('imageUrls').isNotEmpty;
                 return ListView(
                   padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
                   children: [
@@ -250,213 +254,278 @@ class RoomDetailPage extends StatelessWidget {
               collection: 'tenants',
               field: 'roomId',
               equals: roomId,
-              builder: (_, ts) => RecordsView(
-                collection: 'contracts',
-                field: 'roomId',
-                equals: roomId,
-                builder: (_, cs) {
-                  final tenants = ts.where((t) => !t.archived).toList();
-                  final leaderIds = cs
-                      .where(
-                        (c) =>
-                            !c.archived &&
-                            ['active', 'scheduled'].contains(c.text('status')),
-                      )
-                      .map((c) => c.text('tenantId'))
-                      .toSet();
-                  return Column(
-                    children: [
-                      Expanded(
-                        child: ListView(
-                          padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
-                          children: [
-                            Text(
-                              'Danh sách người thuê (${tenants.length})',
-                              style: const TextStyle(
-                                color: ink,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
+              builder: (_, ts) {
+                final tenants = ts.where((t) => !t.archived).toList();
+                final leaderIds = contracts
+                    .where((c) => isContractEffective(c, day))
+                    .map((c) => c.text('tenantId'))
+                    .toSet();
+                return Column(
+                  children: [
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
+                        children: [
+                          Text(
+                            'Danh sách người thuê (${tenants.length})',
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          if (!isRented)
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFF59E0B),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Phòng chưa có hợp đồng hiệu lực',
+                                    style: TextStyle(
+                                      color: Color(0xFF92400E),
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Khi phòng chưa có hợp đồng thì không được thêm người thuê và không được gửi lời mời. Hãy tạo hợp đồng cho phòng này trước.',
+                                    style: TextStyle(
+                                      color: Color(0xFF92400E),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  FilledButton.icon(
+                                    onPressed: room.condition == 'Đang sửa'
+                                        ? null
+                                        : () => openPage(
+                                            context,
+                                            ContractEditPage(
+                                              initialRoomId: roomId,
+                                            ),
+                                          ),
+                                    style: FilledButton.styleFrom(
+                                      minimumSize: const Size(0, 38),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                      ),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.description_outlined,
+                                      size: 17,
+                                    ),
+                                    label: const Text(
+                                      'Tạo hợp đồng ngay',
+                                      style: TextStyle(fontSize: 12.5),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else if (tenants.isEmpty)
+                            empty(
+                              'Chưa có người thuê trong phòng này. Nhấn nút Thêm người ở bên dưới để bổ sung.',
+                            ),
+                          for (var i = 0; i < tenants.length; i++)
+                            Builder(
+                              builder: (context) {
+                                final t = tenants[i];
+                                final isLeader =
+                                    leaderIds.contains(t.id) ||
+                                    (leaderIds.isEmpty &&
+                                        t.text('role') == 'leader');
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: line,
+                                      width: 0.7,
+                                    ),
+                                  ),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: () => openPage(
+                                      context,
+                                      TenantDetailPage(tenantId: t.id),
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        12,
+                                        12,
+                                        6,
+                                        12,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          initialAvatar(t.name, size: 34),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  t.name,
+                                                  style: const TextStyle(
+                                                    color: ink,
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Row(
+                                                  children: [
+                                                    Container(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 10,
+                                                            vertical: 4,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: isLeader
+                                                            ? softBlue
+                                                            : const Color(
+                                                                0xFFECFDF3,
+                                                              ),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              13,
+                                                            ),
+                                                      ),
+                                                      child: Text(
+                                                        isLeader
+                                                            ? 'Trưởng phòng'
+                                                            : 'Thành viên',
+                                                        style: TextStyle(
+                                                          color: isLeader
+                                                              ? blue
+                                                              : const Color(
+                                                                  0xFF16A34A,
+                                                                ),
+                                                          fontSize: 11,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Expanded(
+                                                      child: Text(
+                                                        '${room.name}  •  ${t.text('phone')}',
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: const TextStyle(
+                                                          color: muted,
+                                                          fontSize: 12,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          moreActionsMenu(
+                                            onEdit: () => openPage(
+                                              context,
+                                              TenantEditPage(tenant: t),
+                                            ),
+                                            extras: [
+                                              MoreMenuItem(
+                                                value: 'transfer',
+                                                label: 'Chuyển phòng',
+                                                icon: Icons.swap_horiz_rounded,
+                                                onTap: () =>
+                                                    showRoomTransferDialog(
+                                                      context,
+                                                      tenantId: t.id,
+                                                      tenantName: t.name,
+                                                      currentRoomId: roomId,
+                                                      currentRoomName:
+                                                          room.name,
+                                                    ),
+                                              ),
+                                            ],
+                                            onDelete: () async {
+                                              if (await confirm(
+                                                    context,
+                                                    'Xóa / lưu trữ người thuê ${t.name}?',
+                                                  ) &&
+                                                  context.mounted) {
+                                                await perform(
+                                                  context,
+                                                  () => store.command(
+                                                    'archiveTenant',
+                                                    id: t.id,
+                                                  ),
+                                                  'Đã xóa người thuê',
+                                                );
+                                              }
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        border: Border(top: BorderSide(color: line)),
+                      ),
+                      child: SafeArea(
+                        top: false,
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: FilledButton.icon(
+                            onPressed: isRented
+                                ? () => openPage(
+                                    context,
+                                    TenantEditPage(initialRoomId: roomId),
+                                  )
+                                : null,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: blue,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
                               ),
                             ),
-                            const SizedBox(height: 12),
-                            if (tenants.isEmpty)
-                              empty(
-                                'Chưa có người thuê trong phòng này. Nhấn nút Thêm người ở bên dưới để bổ sung.',
-                              ),
-                            for (var i = 0; i < tenants.length; i++)
-                              Builder(
-                                builder: (context) {
-                                  final t = tenants[i];
-                                  final isLeader =
-                                      leaderIds.contains(t.id) ||
-                                      (leaderIds.isEmpty &&
-                                          t.text('role') == 'leader');
-                                  return Container(
-                                    margin: const EdgeInsets.only(bottom: 10),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(
-                                        color: line,
-                                        width: 0.7,
-                                      ),
-                                    ),
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(14),
-                                      onTap: () => openPage(
-                                        context,
-                                        TenantDetailPage(tenantId: t.id),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          12,
-                                          12,
-                                          6,
-                                          12,
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            initialAvatar(t.name, size: 34),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    t.name,
-                                                    style: const TextStyle(
-                                                      color: ink,
-                                                      fontSize: 13.5,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 6),
-                                                  Row(
-                                                    children: [
-                                                      Container(
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 10,
-                                                              vertical: 4,
-                                                            ),
-                                                        decoration: BoxDecoration(
-                                                          color: isLeader
-                                                              ? softBlue
-                                                              : const Color(
-                                                                  0xFFECFDF3,
-                                                                ),
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                13,
-                                                              ),
-                                                        ),
-                                                        child: Text(
-                                                          isLeader
-                                                              ? 'Trưởng phòng'
-                                                              : 'Thành viên',
-                                                          style: TextStyle(
-                                                            color: isLeader
-                                                                ? blue
-                                                                : const Color(
-                                                                    0xFF16A34A,
-                                                                  ),
-                                                            fontSize: 11,
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      Expanded(
-                                                        child: Text(
-                                                          '${room.name}  •  ${t.text('phone')}',
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style:
-                                                              const TextStyle(
-                                                                color: muted,
-                                                                fontSize: 12,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            moreActionsMenu(
-                                              onEdit: () => openPage(
-                                                context,
-                                                TenantEditPage(tenant: t),
-                                              ),
-                                              onDelete: () async {
-                                                if (await confirm(
-                                                      context,
-                                                      'Xóa / lưu trữ người thuê ${t.name}?',
-                                                    ) &&
-                                                    context.mounted) {
-                                                  await perform(
-                                                    context,
-                                                    () => store.command(
-                                                      'archiveTenant',
-                                                      id: t.id,
-                                                    ),
-                                                    'Đã xóa người thuê',
-                                                  );
-                                                }
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          border: Border(top: BorderSide(color: line)),
-                        ),
-                        child: SafeArea(
-                          top: false,
-                          child: SizedBox(
-                            width: double.infinity,
-                            height: 48,
-                            child: FilledButton.icon(
-                              onPressed: () => openPage(
-                                context,
-                                TenantEditPage(initialRoomId: roomId),
-                              ),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: blue,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              icon: const Icon(Icons.person_add_alt_1_rounded),
-                              label: const Text(
-                                'Thêm người',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            icon: const Icon(Icons.person_add_alt_1_rounded),
+                            label: const Text(
+                              'Thêm người',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ],
-                  );
-                },
-              ),
+                    ),
+                  ],
+                );
+              },
             ),
 
             // TAB 3: Dịch vụ
@@ -648,6 +717,8 @@ class RoomDetailPage extends StatelessWidget {
           ],
         ),
       ),
+    );
+      },
     ),
   );
 }
@@ -682,17 +753,13 @@ class _RoomInviteDialogState extends State<_RoomInviteDialog> {
     _loadInvite();
   }
 
-  Future<void> _loadInvite({bool forceNew = false}) async {
+  Future<void> _loadInvite() async {
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      final generated = await store.getOrCreateRoomInvite(
-        roomId: widget.roomId,
-        roomName: widget.roomName,
-        forceNew: forceNew,
-      );
+      final generated = await store.ensureManagerInviteCode();
       if (!mounted) return;
       setState(() => code = generated);
     } catch (e) {
@@ -722,9 +789,9 @@ class _RoomInviteDialogState extends State<_RoomInviteDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Gửi mã 6 ký tự này cho người thuê nhập lúc Đăng ký hoặc ở màn hình Người thuê để tự động liên kết vào đúng phòng này.',
-            style: TextStyle(color: muted, fontSize: 12),
+          Text(
+            'Dãy trọ sử dụng 1 mã mời cố định duy nhất. Hãy thêm người thuê kèm đúng Email vào ${widget.roomName}, sau đó gửi mã này cho họ nhập để tự động vào đúng phòng.',
+            style: const TextStyle(color: muted, fontSize: 12),
           ),
           const SizedBox(height: 16),
           if (loading)
@@ -777,7 +844,7 @@ class _RoomInviteDialogState extends State<_RoomInviteDialog> {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Chạm để sao chép · Mỗi mã dùng cho 1 người thuê',
+                      'Chạm để sao chép · Mã mời cố định của dãy trọ',
                       style: TextStyle(color: muted, fontSize: 11),
                     ),
                   ],
@@ -788,8 +855,8 @@ class _RoomInviteDialogState extends State<_RoomInviteDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: loading ? null : () => _loadInvite(forceNew: true),
-          child: const Text('Tạo mã mới'),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Đóng'),
         ),
         if (currentCode != null && !loading)
           FilledButton.icon(
@@ -807,12 +874,7 @@ class _RoomInviteDialogState extends State<_RoomInviteDialog> {
               ),
             ),
             icon: const Icon(Icons.copy_rounded, size: 16),
-            label: const Text('Sao chép'),
-          )
-        else
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Đóng'),
+            label: const Text('Sao chép mã'),
           ),
       ],
     );

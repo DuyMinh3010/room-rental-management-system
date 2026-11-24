@@ -23,6 +23,7 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
   bool _saving = false;
 
   static const _issueTypes = ['Thiết bị', 'Điện / Nước', 'Nội thất', 'Khác'];
+  static const _priorities = ['Thấp', 'Trung bình', 'Cao', 'Khẩn cấp'];
 
   @override
   void initState() {
@@ -34,6 +35,12 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
     _costCtrl = TextEditingController(
       text: (m?.data['cost'] ?? 0).toString(),
     );
+    final initIssue = m?.text('issueType') ?? 'Thiết bị';
+    _issueType = _issueTypes.contains(initIssue) ? initIssue : 'Thiết bị';
+    final initPriority = m?.text('priority') ?? 'Trung bình';
+    _priority = _priorities.contains(initPriority)
+        ? initPriority
+        : 'Trung bình';
     final initStatus = m?.text('status') ?? 'new';
     _status = const ['new', 'working', 'done', 'cancelled'].contains(initStatus)
         ? initStatus
@@ -67,6 +74,8 @@ class _MaintCreatePageState extends State<MaintCreatePage> {
       'roomId': _roomId,
       'title': _titleCtrl.text.trim(),
       'description': _descCtrl.text.trim(),
+      'issueType': _issueType,
+      'priority': _priority,
       'status': _status,
       'cost': cost,
     };

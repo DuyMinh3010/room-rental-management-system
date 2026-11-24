@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/google_auth_service.dart';
 import '../widgets/common.dart';
 import 'room_page.dart';
 import 'tenant_list_page.dart';
@@ -26,16 +29,162 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late bool _landlordMode;
   bool checking = false;
   bool joiningByInvite = false;
+  bool confirmingTransfer = false;
   bool upgradingToLandlord = false;
   final inviteController = TextEditingController();
   String? inviteError;
   Future<Map<String, dynamic>?>? tenantPortalFuture;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userMappingSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _tenantDocSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _tenantUidQuerySub;
+  String? _watchedTenantId;
+  String _mappedRoomId = '';
+  Map<String, dynamic>? _latestTenantDoc;
+  bool _latestTenantExists = false;
+  String? _lastTenantStateKey;
+  bool? _lastPendingTransfer;
+
   @override
   void initState() {
     super.initState();
     _landlordMode = widget.landlord && (preferredLandlordMode.value ?? true);
     WidgetsBinding.instance.addObserver(this);
+    _setupTenantRealtimeWatch();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkBilling());
+  }
+
+  void _setupTenantRealtimeWatch() {
+    _cancelTenantRealtimeWatch();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    _userMappingSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((snap) {
+          final data = snap.data();
+          final tid = '${data?['tenantId'] ?? ''}'.trim();
+          _mappedRoomId = '${data?['roomId'] ?? ''}'.trim();
+          if (tid.isNotEmpty) {
+            _tenantUidQuerySub?.cancel();
+            _tenantUidQuerySub = null;
+            if (_watchedTenantId == tid && _tenantDocSub != null) {
+              _evaluateWatchedTenant();
+            } else {
+              _watchTenantDocument(tid);
+            }
+          } else {
+            _watchTenantByUidFallback(user.uid);
+          }
+        }, onError: (_) {});
+  }
+
+  void _watchTenantByUidFallback(String uid) {
+    if (_tenantUidQuerySub != null) return;
+    _tenantDocSub?.cancel();
+    _tenantDocSub = null;
+    _watchedTenantId = null;
+    _latestTenantDoc = null;
+    _latestTenantExists = false;
+    _tenantUidQuerySub = FirebaseFirestore.instance
+        .collection('tenants')
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+          final activeDoc = snap.docs
+              .where((d) => d.data()['archived'] != true)
+              .firstOrNull;
+          if (activeDoc == null) {
+            _onTenantRealtimeChanged(
+              stateKey: 'none',
+              pendingTransfer: false,
+            );
+            return;
+          }
+          final t = activeDoc.data();
+          final roomId = '${t['roomId'] ?? ''}'.trim();
+          final pending = t['pendingRoomTransfer'] == true;
+          _onTenantRealtimeChanged(
+            stateKey: '${activeDoc.id}|$roomId|$pending|false',
+            pendingTransfer: pending,
+          );
+        }, onError: (_) {});
+  }
+
+  void _watchTenantDocument(String tenantId) {
+    _watchedTenantId = tenantId;
+    _latestTenantDoc = null;
+    _latestTenantExists = false;
+    _tenantDocSub?.cancel();
+    _tenantDocSub = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(tenantId)
+        .snapshots()
+        .listen((snap) {
+          _latestTenantExists = snap.exists;
+          _latestTenantDoc = snap.data();
+          _evaluateWatchedTenant();
+        }, onError: (_) {});
+  }
+
+  void _evaluateWatchedTenant() {
+    final tenantId = _watchedTenantId;
+    if (tenantId == null) return;
+    final t = _latestTenantDoc;
+    if (!_latestTenantExists || t == null) {
+      _onTenantRealtimeChanged(stateKey: 'missing', pendingTransfer: false);
+      return;
+    }
+    final roomId = '${t['roomId'] ?? ''}'.trim();
+    final archived = t['archived'] == true;
+    final pending =
+        !archived &&
+        (t['pendingRoomTransfer'] == true ||
+            (_mappedRoomId.isNotEmpty &&
+                roomId.isNotEmpty &&
+                _mappedRoomId != roomId));
+    _onTenantRealtimeChanged(
+      stateKey: '$tenantId|$_mappedRoomId|$roomId|$pending|$archived',
+      pendingTransfer: pending,
+    );
+  }
+
+  void _onTenantRealtimeChanged({
+    required String stateKey,
+    required bool pendingTransfer,
+  }) {
+    final prevKey = _lastTenantStateKey;
+    final prevPending = _lastPendingTransfer;
+    _lastTenantStateKey = stateKey;
+    _lastPendingTransfer = pendingTransfer;
+    if (prevKey == null || prevKey == stateKey) return;
+    if (!mounted || _landlordMode) return;
+
+    if (pendingTransfer && prevPending != true) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          message(
+            context,
+            'Chủ trọ vừa chuyển phòng của bạn. Vui lòng xác nhận để xem thông tin phòng mới.',
+          );
+        }
+      });
+    }
+    setState(() {
+      tenantIndex = 0;
+      tenantPortalFuture = store.loadTenantPortalOrNull();
+    });
+  }
+
+  void _cancelTenantRealtimeWatch() {
+    _userMappingSub?.cancel();
+    _userMappingSub = null;
+    _tenantDocSub?.cancel();
+    _tenantDocSub = null;
+    _tenantUidQuerySub?.cancel();
+    _tenantUidQuerySub = null;
+    _watchedTenantId = null;
   }
 
   @override
@@ -94,6 +243,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _cancelTenantRealtimeWatch();
     WidgetsBinding.instance.removeObserver(this);
     inviteController.dispose();
     super.dispose();
@@ -127,11 +277,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       future: tenantPortalFuture,
       builder: (context, snapshot) {
         final portalData = snapshot.data;
-        final hasPortal = portalData != null;
+        final isPendingTransfer = portalData?['pendingRoomTransfer'] == true;
+        final hasPortal = portalData != null && !isPendingTransfer;
         return Scaffold(
           backgroundColor: canvas,
           appBar: AppBar(
-            title: Text(hasPortal ? tenantTabLabels[tenantIndex] : 'Người thuê'),
+            title: Text(
+              isPendingTransfer
+                  ? 'Chuyển phòng'
+                  : hasPortal
+                  ? tenantTabLabels[tenantIndex]
+                  : 'Người thuê',
+            ),
             actions: [
               if (widget.landlord)
                 TextButton.icon(
@@ -151,7 +308,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 icon: const Icon(Icons.logout_rounded),
                 onPressed: () async {
                   preferredLandlordMode.value = null;
-                  await FirebaseAuth.instance.signOut();
+                  await GoogleAuthService.signOut();
                 },
               ),
             ],
@@ -199,6 +356,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 ],
               );
             }
+            if (isPendingTransfer) {
+              return _pendingTransferView(context, portalData!);
+            }
             if (hasPortal) {
               return TenantPortalContent(
                 index: tenantIndex,
@@ -228,6 +388,205 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
+  Widget _pendingTransferView(
+    BuildContext context,
+    Map<String, dynamic> transferData,
+  ) {
+    final fromNameRaw = '${transferData['fromRoomName'] ?? ''}'.trim();
+    final toNameRaw = '${transferData['toRoomName'] ?? ''}'.trim();
+    final fromLabel = fromNameRaw.isEmpty ? 'Phòng cũ' : fromNameRaw;
+    final toLabel = toNameRaw.isEmpty ? 'Phòng mới' : toNameRaw;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: blue.withValues(alpha: 0.4), width: 1.1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: softBlue,
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: const Icon(
+                      Icons.swap_horiz_rounded,
+                      color: blue,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Thông báo chuyển phòng',
+                          style: TextStyle(
+                            color: ink,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Cần xác nhận để mở dashboard phòng mới',
+                          style: TextStyle(
+                            color: blue,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: canvas,
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: line),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          const Text(
+                            'PHÒNG CŨ',
+                            style: TextStyle(
+                              color: muted,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            fromLabel,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Icon(
+                        Icons.arrow_forward_rounded,
+                        color: blue,
+                        size: 22,
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          const Text(
+                            'PHÒNG MỚI',
+                            style: TextStyle(
+                              color: blue,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            toLabel,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: blue,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Chủ trọ đã chuyển bạn từ $fromLabel sang $toLabel. '
+                'Vui lòng nhấn nút xác nhận bên dưới để xem thông tin phòng mới. '
+                'Khi chưa xác nhận, bạn sẽ không xem được thông tin của bất kỳ phòng nào.',
+                style: const TextStyle(color: muted, fontSize: 12.5, height: 1.45),
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: FilledButton.icon(
+                  onPressed: confirmingTransfer
+                      ? null
+                      : () => _confirmRoomTransfer(toLabel),
+                  icon: confirmingTransfer
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.check_circle_outline_rounded, size: 19),
+                  label: Text(
+                    confirmingTransfer
+                        ? 'Đang xác nhận...'
+                        : 'Xác nhận chuyển sang $toLabel',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmRoomTransfer(String toRoomLabel) async {
+    if (confirmingTransfer) return;
+    setState(() => confirmingTransfer = true);
+    try {
+      await store.confirmRoomTransfer();
+      if (!mounted) return;
+      setState(() {
+        tenantIndex = 0;
+        tenantPortalFuture = store.loadTenantPortalOrNull();
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          message(
+            context,
+            'Đã xác nhận chuyển phòng! Chào mừng bạn đến $toRoomLabel.',
+          );
+        }
+      });
+    } catch (e) {
+      if (mounted) message(context, errorText(e));
+    } finally {
+      if (mounted) setState(() => confirmingTransfer = false);
+    }
+  }
+
   Widget _inviteCodeCard(BuildContext context) {
     final email = FirebaseAuth.instance.currentUser?.email ?? '';
     return box(
@@ -235,7 +594,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Tham gia phòng bằng Mã mời',
+            'Nhập mã mời dãy trọ',
             style: TextStyle(
               color: ink,
               fontSize: 15,
@@ -244,7 +603,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
           const SizedBox(height: 6),
           Text(
-            'Đang đăng nhập bằng $email. Nhập mã mời 6 ký tự do chủ trọ cung cấp để tự động liên kết vào đúng phòng thuê của bạn.',
+            'Tài khoản $email chưa liên kết với phòng nào. Hãy nhập mã mời cố định của dãy trọ do chủ trọ cung cấp — hệ thống sẽ tự động đối chiếu email này để đưa bạn vào đúng phòng.',
             style: const TextStyle(color: muted, fontSize: 12),
           ),
           const SizedBox(height: 12),
@@ -262,7 +621,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             },
             onSubmitted: (_) => _joinByInviteCode(context),
             decoration: InputDecoration(
-              hintText: 'Nhập mã 6 ký tự (VD: A7K92P)',
+              hintText: 'Nhập mã mời dãy trọ (VD: A7K92P)',
               hintStyle: const TextStyle(
                 color: muted,
                 fontSize: 13,
@@ -291,7 +650,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     )
                   : const Icon(Icons.login_rounded, size: 18),
               label: Text(
-                joiningByInvite ? 'Đang kiểm tra mã mời...' : 'Vào phòng ngay',
+                joiningByInvite
+                    ? 'Đang đối chiếu mã mời & email...'
+                    : 'Xác nhận mã mời & Vào phòng',
               ),
             ),
           ),
@@ -302,9 +663,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _joinByInviteCode(BuildContext context) async {
     if (joiningByInvite) return;
-    final raw = inviteController.text.trim();
+    final raw = inviteController.text.trim().toUpperCase();
     if (raw.isEmpty) {
-      setState(() => inviteError = 'Vui lòng nhập mã mời 6 ký tự từ chủ trọ');
+      setState(() => inviteError = 'Vui lòng nhập mã mời từ chủ trọ');
       return;
     }
     FocusManager.instance.primaryFocus?.unfocus();
@@ -336,7 +697,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         inviteError =
             error is FirebaseException && error.code == 'permission-denied'
-            ? 'Chưa triển khai firestore.rules cho mã mời phòng.'
+            ? 'Chưa đủ quyền truy cập Firestore. Hãy triển khai firestore.rules mới nhất.'
             : errorText(error);
       });
     } finally {
@@ -417,13 +778,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     preferredLandlordMode.value = true;
     try {
       final ownerName = submitted['name']!;
-      await FirebaseFirestore.instance.collection('managers').doc(user.uid).set({
-        'enabled': true,
-        'role': 'landlord',
-        'name': ownerName,
-        'email': normalizedEmail,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      await store.createManagerAccount(
+        uid: user.uid,
+        name: ownerName,
+        email: normalizedEmail,
+        phone: submitted['phone'] ?? '',
+      );
       if (user.displayName == null || user.displayName!.trim().isEmpty) {
         try {
           await user.updateDisplayName(ownerName);

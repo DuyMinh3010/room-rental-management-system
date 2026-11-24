@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 import 'screens/app_shell.dart';
 import 'screens/login_page.dart';
+import 'services/google_auth_service.dart';
 import 'widgets/common.dart';
 
 Future<void> main() async {
@@ -15,7 +18,8 @@ Future<void> main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    await FirebaseAuth.instance.signOut();
+    // Khởi tạo sẵn GoogleSignIn mà KHÔNG đăng xuất phiên hiện tại.
+    unawaited(GoogleAuthService.ensureInitialized().catchError((_) {}));
 
     runApp(const MyApp());
   } catch (e) {
@@ -151,8 +155,8 @@ class MyApp extends StatelessWidget {
         ),
         chipTheme: ChipThemeData(
           backgroundColor: Colors.white,
-          selectedColor: const Color(0xFFEFF4FF),
-          disabledColor: const Color(0xFFF1F5F9),
+          selectedColor: softBlue,
+          disabledColor: const Color(0xFFF2EFEA),
           side: const BorderSide(color: line),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),

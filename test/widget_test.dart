@@ -48,8 +48,10 @@ void main() {
   ) async {
     await tester.pumpWidget(const MaterialApp(home: LoginPage()));
 
+    expect(find.text('Mã mời dãy trọ (tùy chọn)'), findsNothing);
     await tester.tap(find.text('Người thuê'));
     await tester.pump();
+    expect(find.text('Mã mời dãy trọ (tùy chọn)'), findsOneWidget);
     await tester.ensureVisible(find.widgetWithText(FilledButton, 'Đăng nhập'));
     await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
     await tester.pumpAndSettle();
@@ -65,12 +67,19 @@ void main() {
 
     expect(find.text('Chủ trọ'), findsOneWidget);
     expect(find.text('Người thuê'), findsOneWidget);
-    expect(find.text('Số điện thoại'), findsOneWidget);
+    expect(
+      find.textContaining('Số điện thoại', findRichText: true),
+      findsOneWidget,
+    );
 
-    await tester.ensureVisible(
+    await tester.scrollUntilVisible(
       find.widgetWithText(FilledButton, 'Tạo tài khoản'),
+      200,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.tap(find.widgetWithText(FilledButton, 'Tạo tài khoản'));
+    await tester.pump();
+    await tester.drag(find.byType(ListView), const Offset(0, 500));
     await tester.pump();
 
     expect(find.text('Vui lòng chọn Chủ trọ hoặc Người thuê'), findsOneWidget);
@@ -97,10 +106,35 @@ void main() {
 
     expect(
       find.text(
-        'Nhập mã mời 6 ký tự từ chủ trọ để tự động vào đúng phòng ngay khi tạo tài khoản.',
+        'Nhập mã mời từ chủ trọ để tự động đối chiếu email và vào đúng phòng ngay khi tạo tài khoản.',
       ),
       findsOneWidget,
     );
     expect(find.text('Mã mời vào phòng (tùy chọn)'), findsOneWidget);
+  });
+
+  testWidgets('register invite code validator enforces 6-8 alphanumeric chars', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: RegisterPage()));
+
+    await tester.tap(find.text('Người thuê'));
+    await tester.pump();
+
+    final inviteField = find.widgetWithText(
+      TextFormField,
+      'VD: A7K92P (có thể nhập sau khi đăng nhập)',
+    );
+    await tester.enterText(inviteField, 'AB12');
+    await tester.pump();
+    expect(find.text('Mã mời gồm 6–8 ký tự chữ và số'), findsOneWidget);
+
+    await tester.enterText(inviteField, '  abc123  ');
+    await tester.pump();
+    expect(find.text('Mã mời gồm 6–8 ký tự chữ và số'), findsNothing);
+
+    await tester.enterText(inviteField, 'ABCD1234');
+    await tester.pump();
+    expect(find.text('Mã mời gồm 6–8 ký tự chữ và số'), findsNothing);
   });
 }

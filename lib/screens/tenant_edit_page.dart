@@ -282,7 +282,7 @@ class _TenantEditPageState extends State<TenantEditPage> {
         data: {
           'name': _nameCtrl.text.trim(),
           'phone': _phoneCtrl.text.trim(),
-          'email': _emailCtrl.text.trim(),
+          'email': _emailCtrl.text.trim().toLowerCase(),
           'identity': _identityCtrl.text.trim(),
           'roomId': _roomId,
           'role': _role,
@@ -438,15 +438,56 @@ class _TenantEditPageState extends State<TenantEditPage> {
         ),
         body: RecordsView(
           collection: 'rooms',
-          builder: (_, rs) {
-            final rooms = rs.where((r) => !r.archived).toList()
-              ..sort((a, b) => naturalCompare(a.name, b.name));
-            return Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
-                children: [
-                  formLabel('Họ và tên', required: true),
+          builder: (_, rs) => RecordsView(
+            collection: 'contracts',
+            builder: (_, contracts) {
+              final day = todayVi();
+              final contractedRoomIds = contracts
+                  .where((c) => isContractEffective(c, day))
+                  .map((c) => c.text('roomId'))
+                  .where((id) => id.isNotEmpty)
+                  .toSet();
+              final currentTenantRoomId = widget.tenant?.text('roomId') ?? '';
+              final rooms = rs
+                  .where(
+                    (r) =>
+                        !r.archived &&
+                        (contractedRoomIds.contains(r.id) ||
+                            (!isNew && r.id == currentTenantRoomId)),
+                  )
+                  .toList()
+                ..sort((a, b) => naturalCompare(a.name, b.name));
+              if (isNew &&
+                  (_roomId.isEmpty || !rooms.any((r) => r.id == _roomId)) &&
+                  rooms.isNotEmpty) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) setState(() => _roomId = rooms.first.id);
+                });
+              }
+              return Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
+                  children: [
+                    if (isNew && contractedRoomIds.isEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFF59E0B)),
+                        ),
+                        child: const Text(
+                          'Hiện chưa có phòng nào có hợp đồng hiệu lực. Vui lòng tạo hợp đồng cho phòng trước khi thêm người thuê.',
+                          style: TextStyle(
+                            color: Color(0xFF92400E),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    formLabel('Họ và tên', required: true),
                   TextFormField(
                     controller: _nameCtrl,
                     enabled: !_saving,
@@ -501,23 +542,39 @@ class _TenantEditPageState extends State<TenantEditPage> {
                     ],
                   ),
                   const SizedBox(height: 14),
-                  formLabel('Phòng đang ở'),
+                  formLabel('Phòng đang ở', required: isNew),
                   DropdownButtonFormField<String>(
-                    key: ValueKey('room:$_roomId:${rooms.length}'),
-                    initialValue:
-                        _roomId.isEmpty || rooms.any((r) => r.id == _roomId)
+                    key: ValueKey('room:$_roomId:${rooms.length}:$isNew'),
+                    initialValue: rooms.any((r) => r.id == _roomId)
                         ? _roomId
-                        : '',
+                        : (isNew ? null : ''),
                     isExpanded: true,
-                    decoration: formDecoration(hint: 'Chọn phòng'),
+                    decoration: formDecoration(
+                      hint: rooms.isEmpty
+                          ? 'Chưa có phòng nào đã lập hợp đồng'
+                          : 'Chọn phòng đã có hợp đồng',
+                    ),
                     items: [
-                      const DropdownMenuItem(
-                        value: '',
-                        child: Text('Chưa gán phòng'),
-                      ),
+                      if (!isNew && currentTenantRoomId.isEmpty)
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Chưa gán phòng'),
+                        ),
                       for (final r in rooms)
                         DropdownMenuItem(value: r.id, child: Text(r.name)),
                     ],
+                    validator: (v) {
+                      final selected = (v ?? '').trim();
+                      if (isNew && selected.isEmpty) {
+                        return 'Vui lòng chọn phòng đã có hợp đồng';
+                      }
+                      if (selected.isNotEmpty &&
+                          (isNew || selected != currentTenantRoomId) &&
+                          !contractedRoomIds.contains(selected)) {
+                        return 'Phòng chưa có hợp đồng hiệu lực';
+                      }
+                      return null;
+                    },
                     onChanged: _saving
                         ? null
                         : (v) => setState(() => _roomId = v ?? ''),
@@ -588,31 +645,35 @@ class _TenantEditPageState extends State<TenantEditPage> {
                     decoration: formDecoration(hint: 'Ghi chú thêm...'),
                   ),
                   const SizedBox(height: 22),
-                  SizedBox(
-                    height: 52,
-                    child: FilledButton(
-                      onPressed: _saving ? null : _save,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: blue,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                    SizedBox(
+                      height: 52,
+                      child: FilledButton(
+                        onPressed:
+                            _saving || (isNew && contractedRoomIds.isEmpty)
+                            ? null
+                            : _save,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: blue,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        _saving
-                            ? 'Đang lưu...'
-                            : (isNew ? 'Thêm người thuê' : 'Lưu thay đổi'),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                        child: Text(
+                          _saving
+                              ? 'Đang lưu...'
+                              : (isNew ? 'Thêm người thuê' : 'Lưu thay đổi'),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            );
-          },
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

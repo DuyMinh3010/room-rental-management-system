@@ -35,8 +35,96 @@ class SparkCommands {
     return v;
   }
 
+  String _linkedUid(Data? t) {
+    final userId = '${t?['userId'] ?? ''}'.trim();
+    if (userId.isNotEmpty) return userId;
+    return '${t?['authUid'] ?? ''}'.trim();
+  }
+
   bool active(Data c) =>
       ['active', 'scheduled'].contains(c['status']) && c['archived'] != true;
+
+  bool _effectiveContract(Data c, String day) =>
+      active(c) && '${c['endDate']}'.compareTo(day) >= 0;
+
+  Data _roomTransferFields({
+    required Data? oldTenant,
+    required String fromRoomId,
+    required String fromRoomName,
+    required String toRoomId,
+    required String toRoomName,
+  }) {
+    if (oldTenant == null ||
+        fromRoomId.isEmpty ||
+        toRoomId.isEmpty ||
+        fromRoomId == toRoomId ||
+        _linkedUid(oldTenant).isEmpty) {
+      return const {};
+    }
+    final wasPending = oldTenant['pendingRoomTransfer'] == true;
+    final prevFromId = '${oldTenant['transferFromRoomId'] ?? ''}'.trim();
+    final prevFromName = '${oldTenant['transferFromRoomName'] ?? ''}'.trim();
+    return {
+      'pendingRoomTransfer': true,
+      'transferFromRoomId': wasPending && prevFromId.isNotEmpty
+          ? prevFromId
+          : fromRoomId,
+      'transferFromRoomName': wasPending && prevFromName.isNotEmpty
+          ? prevFromName
+          : fromRoomName,
+      'transferToRoomId': toRoomId,
+      'transferToRoomName': toRoomName,
+      'transferredAt': stamp(),
+    };
+  }
+
+  void _notifyRoomTransfer(
+    Transaction tx, {
+    required String tenantId,
+    required Data? oldTenant,
+    required String fromRoomId,
+    required String fromRoomName,
+    required String toRoomId,
+    required String toRoomName,
+  }) {
+    if (oldTenant == null ||
+        fromRoomId.isEmpty ||
+        toRoomId.isEmpty ||
+        fromRoomId == toRoomId) {
+      return;
+    }
+    final recipient = _linkedUid(oldTenant);
+    if (recipient.isEmpty) return;
+    final wasPending = oldTenant['pendingRoomTransfer'] == true;
+    final prevFromId = '${oldTenant['transferFromRoomId'] ?? ''}'.trim();
+    final prevFromName = '${oldTenant['transferFromRoomName'] ?? ''}'.trim();
+    final effectiveFromId = wasPending && prevFromId.isNotEmpty
+        ? prevFromId
+        : fromRoomId;
+    final effectiveFromName = wasPending && prevFromName.isNotEmpty
+        ? prevFromName
+        : (fromRoomName.isEmpty ? 'phòng cũ' : fromRoomName);
+    final effectiveToName = toRoomName.isEmpty ? 'phòng mới' : toRoomName;
+    final noticeKey =
+        'transfer_${tenantId}_${DateTime.now().microsecondsSinceEpoch}';
+    tx.set(ref('notifications', noticeKey), {
+      'ownerId': uid,
+      'title': 'Thông báo chuyển phòng',
+      'body':
+          'Chủ trọ đã chuyển bạn từ $effectiveFromName sang $effectiveToName. Vui lòng nhấn xác nhận để xem thông tin phòng mới.',
+      'audience': 'tenant',
+      'recipientUid': recipient,
+      'type': 'room_transfer',
+      'tenantId': tenantId,
+      'fromRoomId': effectiveFromId,
+      'fromRoomName': effectiveFromName,
+      'toRoomId': toRoomId,
+      'toRoomName': effectiveToName,
+      'roomId': toRoomId,
+      'createdAt': stamp(),
+      'delivery': 'in_app',
+    });
+  }
 
   Data found(Data? d, String label) {
     if (d == null || d['archived'] == true) {
@@ -170,6 +258,7 @@ class SparkCommands {
             if (day > 31) throw StateError('Ngày chốt từ 1–31');
             final term = Billing.number(d['paymentTermDays'], 'Hạn thanh toán');
             if (term > 60) throw StateError('Hạn thanh toán tối đa 60 ngày');
+            final newPrice = Billing.number(d['price'], 'Giá thuê', min: 1);
             roomSaveStage = 'ghi phòng mới';
             tx.set(ref('rooms', k), {
               'ownerId': uid,
@@ -184,7 +273,7 @@ class SparkCommands {
                 min: 0.1,
                 integer: false,
               ),
-              'price': Billing.number(d['price'], 'Giá thuê', min: 1),
+              'price': newPrice,
               'deposit': Billing.number(d['deposit'], 'Tiền cọc'),
               'billingDay':
                   '${day.toInt().toString().padLeft(2, '0')} hàng tháng',
@@ -198,9 +287,27 @@ class SparkCommands {
                 'initialElectric': old!['initialElectric'],
               if (old?['initialWater'] != null)
                 'initialWater': old!['initialWater'],
+              if (old?['initialMeters'] is Map)
+                'initialMeters': old!['initialMeters'],
               'createdAt': old?['createdAt'] ?? stamp(),
               'updatedAt': stamp(),
             }, SetOptions(merge: true));
+            if (old != null && old['price'] != newPrice) {
+              final rContracts = await list(
+                'contracts',
+                field: 'roomId',
+                equals: k,
+              );
+              for (final rc in rContracts) {
+                if (active(rc) && rc['rent'] == old['price']) {
+                  tx.update(ref('contracts', rc['_id'] as String), {
+                    'rent': newPrice,
+                    'roomName': name,
+                    'updatedAt': stamp(),
+                  });
+                }
+              }
+            }
           } else if (action == 'archiveRoom') {
             owned(await read(tx, 'rooms', k), 'Phòng');
             final ts = await list('tenants', field: 'roomId', equals: k),
@@ -221,21 +328,21 @@ class SparkCommands {
             if (old != null) owned(old, 'Người thuê');
             final email = action == 'archiveTenant'
                 ? ''
-                : text(d['email'], 'email', optional: true).toLowerCase();
+                : text(d['email'], 'email', optional: true).trim().toLowerCase();
             if (email.isNotEmpty &&
                 !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
               throw StateError('Email người thuê không hợp lệ');
             }
             if (action == 'saveTenant' &&
-                '${old?['authUid'] ?? ''}'.isNotEmpty &&
-                email != '${old?['email'] ?? ''}') {
+                _linkedUid(old).isNotEmpty &&
+                email != '${old?['email'] ?? ''}'.trim().toLowerCase()) {
               throw StateError(
                 'Hồ sơ đã liên kết tài khoản. Không đổi email tại đây; hãy cập nhật email của tài khoản đã liên kết.',
               );
             }
             final roomId = action == 'archiveTenant'
                 ? ''
-                : text(d['roomId'], 'phòng', optional: true);
+                : text(d['roomId'], 'phòng', optional: !isNew);
             final oldRoom = '${old?['roomId'] ?? ''}';
             final room = roomId.isEmpty
                 ? null
@@ -243,19 +350,39 @@ class SparkCommands {
             final previousRoom = oldRoom.isEmpty
                 ? null
                 : owned(await read(tx, 'rooms', oldRoom), 'Phòng');
+            final roomContracts = roomId.isEmpty
+                ? <Data>[]
+                : await list('contracts', field: 'roomId', equals: roomId);
+            final activeRoomContracts = roomContracts
+                .where((c) => _effectiveContract(c, now))
+                .toList();
+            if (action == 'saveTenant' &&
+                (isNew || (roomId.isNotEmpty && roomId != oldRoom)) &&
+                activeRoomContracts.isEmpty) {
+              throw StateError(
+                'Phòng chưa có hợp đồng hiệu lực nên không thể thêm người thuê. Hãy lập hợp đồng trước.',
+              );
+            }
             final cs = oldRoom.isEmpty
                 ? await list('contracts', field: 'tenantId', equals: k)
                 : await list('contracts', field: 'roomId', equals: oldRoom);
-            if (cs.any(
-              (c) =>
-                  active(c) &&
-                  (c['tenantId'] == k ||
-                      (c['tenantIds'] as List? ?? []).contains(k)) &&
-                  c['roomId'] != roomId,
-            )) {
-              throw StateError(
-                'Kết thúc hợp đồng trước khi chuyển/xóa người thuê',
-              );
+            if (action == 'archiveTenant') {
+              if (cs.any(
+                (c) =>
+                    active(c) &&
+                    (c['tenantId'] == k ||
+                        (c['tenantIds'] as List? ?? []).contains(k)),
+              )) {
+                throw StateError(
+                  'Kết thúc hợp đồng trước khi xóa người thuê',
+                );
+              }
+            } else if (oldRoom != roomId) {
+              if (cs.any((c) => active(c) && c['tenantId'] == k)) {
+                throw StateError(
+                  'Người thuê đang là Trưởng phòng của hợp đồng hiện tại. Hãy dùng nút "Chuyển phòng" để chuyển phòng hoặc đổi Trưởng phòng trước.',
+                );
+              }
             }
             final others = roomId.isEmpty
                 ? <Data>[]
@@ -275,6 +402,8 @@ class SparkCommands {
                 'ownerId': uid,
                 'archived': true,
                 'roomId': '',
+                'hasActiveContract': false,
+                'pendingRoomTransfer': false,
                 'updatedAt': stamp(),
               });
             } else {
@@ -308,6 +437,16 @@ class SparkCommands {
                 }
               }
 
+              final transferPatch = !isNew
+                  ? _roomTransferFields(
+                      oldTenant: old,
+                      fromRoomId: oldRoom,
+                      fromRoomName: '${previousRoom?['name'] ?? ''}',
+                      toRoomId: roomId,
+                      toRoomName: '${room?['name'] ?? ''}',
+                    )
+                  : const <String, dynamic>{};
+
               tx.set(ref('tenants', k), {
                 'ownerId': uid,
                 'name': name,
@@ -321,16 +460,47 @@ class SparkCommands {
                 'cccdFrontUrl': cccdFrontUrl,
                 'cccdBackUrl': cccdBackUrl,
                 'roomId': roomId,
+                'hasActiveContract': activeRoomContracts.isNotEmpty,
+                if (activeRoomContracts.isNotEmpty)
+                  'contractIds': activeRoomContracts
+                      .map((c) => c['_id'] as String)
+                      .toList(),
                 'archived': false,
-                'authUid': old?['authUid'] ?? '',
+                'userId': old?['userId'] ?? old?['authUid'] ?? '',
+                'authUid': old?['authUid'] ?? old?['userId'] ?? '',
+                ...transferPatch,
                 'createdAt': old?['createdAt'] ?? stamp(),
                 'updatedAt': stamp(),
               }, SetOptions(merge: true));
 
+              if (transferPatch.isNotEmpty) {
+                _notifyRoomTransfer(
+                  tx,
+                  tenantId: k,
+                  oldTenant: old,
+                  fromRoomId: oldRoom,
+                  fromRoomName: '${previousRoom?['name'] ?? ''}',
+                  toRoomId: roomId,
+                  toRoomName: '${room?['name'] ?? ''}',
+                );
+              }
+
+              // Nếu thành viên chuyển sang phòng mới, gỡ khỏi danh sách tenantIds hợp đồng phòng cũ
+              if (oldRoom.isNotEmpty && oldRoom != roomId) {
+                for (final oldC in cs) {
+                  if (!active(oldC) || oldC['tenantId'] == k) continue;
+                  final oldIds = (oldC['tenantIds'] as List? ?? [])
+                      .whereType<String>()
+                      .where((tid) => tid != k)
+                      .toList();
+                  tx.update(ref('contracts', oldC['_id'] as String), {
+                    'tenantIds': oldIds,
+                    'updatedAt': stamp(),
+                  });
+                }
+              }
+
               // Đồng bộ thông tin người thuê sang Hợp đồng và Hóa đơn liên kết
-              final roomContracts = roomId.isEmpty
-                  ? <Data>[]
-                  : await list('contracts', field: 'roomId', equals: roomId);
               final tenantContracts = await list(
                 'contracts',
                 field: 'tenantId',
@@ -395,6 +565,7 @@ class SparkCommands {
             final authUid = id(args['authUid']);
             final cs = await list('contracts', field: 'tenantId', equals: k);
             tx.update(ref('tenants', k), {
+              'userId': authUid,
               'authUid': authUid,
               'updatedAt': stamp(),
             });
@@ -493,19 +664,26 @@ class SparkCommands {
             );
             if (bills.any(
               (b) =>
-                  b['meterPeriod'] == p &&
-                  b['status'] != 'void' &&
+                  (b['meterPeriod'] == p || b['period'] == p) &&
+                  b['status'] == 'paid' &&
                   b['archived'] != true,
             )) {
-              throw StateError('Kỳ này đã phát hành hóa đơn, không sửa chỉ số');
+              throw StateError(
+                'Kỳ này đã thanh toán hóa đơn, không sửa chỉ số',
+              );
             }
+            final roomInitialMeters = room['initialMeters'] is Map
+                ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+                : const <String, dynamic>{};
             final sNameLower = '${service['name'] ?? ''}'.toLowerCase();
             final fallbackInitial =
-                sNameLower.contains('điện') || sNameLower.contains('dien')
-                ? room['initialElectric']
-                : (sNameLower.contains('nước') || sNameLower.contains('nuoc')
-                      ? room['initialWater']
-                      : 0);
+                roomInitialMeters[sid] ??
+                (sNameLower.contains('điện') || sNameLower.contains('dien')
+                    ? room['initialElectric']
+                    : (sNameLower.contains('nước') ||
+                              sNameLower.contains('nuoc')
+                          ? room['initialWater']
+                          : 0));
             final previous = Billing.number(
                   prev?['current'] ?? d['previous'] ?? fallbackInitial ?? 0,
                   'Chỉ số cũ',
@@ -589,7 +767,10 @@ class SparkCommands {
                 await read(tx, 'tenants', tenantId),
                 'Người đứng hợp đồng',
               );
-              if (leader['roomId'] != roomId) {
+              final leaderRoom = '${leader['roomId'] ?? ''}'.trim();
+              if (leaderRoom.isNotEmpty &&
+                  leaderRoom != roomId &&
+                  (previousRoom == null || leaderRoom != previousRoomId)) {
                 throw StateError('Người đứng hợp đồng chưa thuộc phòng đã chọn');
               }
               linkedTenantRecords[tenantId] = leader;
@@ -613,12 +794,21 @@ class SparkCommands {
               if (await read(tx, 'tenants', tenantKey) != null) {
                 throw StateError('Người thuê đã tồn tại, vui lòng thử lại');
               }
+              final draftEmail = text(
+                draft['email'],
+                'email',
+                optional: true,
+              ).trim().toLowerCase();
+              if (draftEmail.isNotEmpty &&
+                  !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(draftEmail)) {
+                throw StateError('Email người thuê không hợp lệ');
+              }
               createdTenants.add({
                 '_id': tenantKey,
                 'name': text(draft['name'], 'họ tên'),
                 'role': role,
                 'phone': text(draft['phone'], 'số điện thoại', optional: true),
-                'email': text(draft['email'], 'email', optional: true),
+                'email': draftEmail,
                 'identity': text(
                   draft['identity'],
                   'CCCD/Passport',
@@ -651,7 +841,10 @@ class SparkCommands {
                 await read(tx, 'tenants', memberId),
                 'Thành viên',
               );
-              if (member['roomId'] != roomId) {
+              final memberRoom = '${member['roomId'] ?? ''}'.trim();
+              if (memberRoom.isNotEmpty &&
+                  memberRoom != roomId &&
+                  (previousRoom == null || memberRoom != previousRoomId)) {
                 throw StateError('Thành viên chưa thuộc phòng đã chọn');
               }
               linkedTenantRecords[memberId] = member;
@@ -690,6 +883,13 @@ class SparkCommands {
               field: 'roomId',
               equals: roomId,
             );
+            final oldRoomTenants = previousRoom == null
+                ? const <Data>[]
+                : await list(
+                    'tenants',
+                    field: 'roomId',
+                    equals: previousRoomId,
+                  );
             for (final rt in roomTenants) {
               final rtId = rt['_id'] as String;
               if (rt['archived'] != true &&
@@ -701,10 +901,25 @@ class SparkCommands {
                 }
               }
             }
-            final occupiedCount = roomTenants
-                .where((t) => t['archived'] != true)
-                .length;
-            if (occupiedCount + createdTenants.length >
+            if (previousRoom != null) {
+              for (final ort in oldRoomTenants) {
+                final ortId = ort['_id'] as String;
+                if (ort['archived'] != true &&
+                    previousTenantIds.contains(ortId) &&
+                    !tenantIds.contains(ortId)) {
+                  linkedTenantRecords[ortId] = ort;
+                  tenantIds.add(ortId);
+                }
+              }
+            }
+            final finalRoomTenantIds = <String>{
+              ...roomTenants
+                  .where((t) => t['archived'] != true)
+                  .map((t) => t['_id'] as String),
+              ...tenantIds,
+              ...createdTenants.map((t) => t['_id'] as String),
+            };
+            if (finalRoomTenantIds.length >
                 (room['capacity'] as num? ?? 100)) {
               throw StateError('Phòng không đủ sức chứa cho số người thuê này');
             }
@@ -752,8 +967,11 @@ class SparkCommands {
             if (serviceIds.length > 30) {
               throw StateError('Tối đa 30 dịch vụ/phòng');
             }
+            final loadedServices = <Data>[];
             for (final serviceId in serviceIds) {
-              owned(await read(tx, 'services', serviceId), 'Dịch vụ');
+              loadedServices.add(
+                owned(await read(tx, 'services', serviceId), 'Dịch vụ'),
+              );
             }
             final rentVal = Billing.number(
               d['rent'] ?? old?['rent'] ?? room['price'],
@@ -764,39 +982,78 @@ class SparkCommands {
               d['deposit'] ?? old?['deposit'] ?? room['deposit'] ?? 0,
               'Tiền cọc',
             );
-            final initialElectric = Billing.number(
-              d['initialElectric'] ??
-                  old?['initialElectric'] ??
-                  room['initialElectric'] ??
-                  0,
-              'Chỉ số điện ban đầu',
-              integer: false,
-            );
-            final initialWater = Billing.number(
-              d['initialWater'] ??
-                  old?['initialWater'] ??
-                  room['initialWater'] ??
-                  0,
-              'Chỉ số nước ban đầu',
-              integer: false,
-            );
+            final rawInitialMeters = d['initialMeters'] is Map
+                ? Map<String, dynamic>.from(d['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final oldInitialMeters = old?['initialMeters'] is Map
+                ? Map<String, dynamic>.from(old!['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final roomInitialMeters = room['initialMeters'] is Map
+                ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+                : const <String, dynamic>{};
+            final initialMeters = <String, num>{};
+            num? initialElectric;
+            num? initialWater;
+            for (final svc in loadedServices) {
+              if (svc['mode'] != 'meter') continue;
+              final sid = svc['_id'] as String;
+              final sNameLower = '${svc['name'] ?? ''}'.toLowerCase();
+              final isElectric =
+                  sNameLower.contains('điện') || sNameLower.contains('dien');
+              final isWater =
+                  sNameLower.contains('nước') || sNameLower.contains('nuoc');
+              final rawVal =
+                  rawInitialMeters[sid] ??
+                  (isElectric ? d['initialElectric'] : null) ??
+                  (isWater ? d['initialWater'] : null) ??
+                  oldInitialMeters[sid] ??
+                  (isElectric ? (old?['initialElectric']) : null) ??
+                  (isWater ? (old?['initialWater']) : null) ??
+                  roomInitialMeters[sid] ??
+                  (isElectric ? room['initialElectric'] : null) ??
+                  (isWater ? room['initialWater'] : null) ??
+                  0;
+              final val = Billing.number(
+                rawVal,
+                'Chỉ số ${svc['name']} ban đầu',
+                integer: false,
+              );
+              initialMeters[sid] = val;
+              if (isElectric && initialElectric == null) {
+                initialElectric = val;
+              } else if (isWater && initialWater == null) {
+                initialWater = val;
+              }
+            }
 
             final tenantName = tenant['name'] as String;
             final tenantContact =
                 tenantIdInput.isNotEmpty && d['tenantContact'] is Map
                 ? Map<String, dynamic>.from(d['tenantContact'] as Map)
                 : <String, dynamic>{};
+            final contactEmail = text(
+              tenantContact['email'] ?? tenant['email'],
+              'email',
+              optional: true,
+            ).trim().toLowerCase();
+            if (contactEmail.isNotEmpty &&
+                !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(contactEmail)) {
+              throw StateError('Email người thuê không hợp lệ');
+            }
+            if (tenantIdInput.isNotEmpty &&
+                _linkedUid(tenant).isNotEmpty &&
+                contactEmail != '${tenant['email'] ?? ''}'.trim().toLowerCase()) {
+              throw StateError(
+                'Hồ sơ đã liên kết tài khoản. Không đổi email tại đây; hãy cập nhật email của tài khoản đã liên kết.',
+              );
+            }
             final contact = <String, String>{
               'phone': text(
                 tenantContact['phone'] ?? tenant['phone'],
                 'số điện thoại',
                 optional: true,
               ),
-              'email': text(
-                tenantContact['email'] ?? tenant['email'],
-                'email',
-                optional: true,
-              ),
+              'email': contactEmail,
               'identity': text(
                 tenantContact['identity'] ?? tenant['identity'],
                 'CCCD/Passport',
@@ -818,8 +1075,10 @@ class SparkCommands {
                 'note': '',
                 'role': cId == tenantId ? 'leader' : 'member',
                 'roomId': roomId,
+                'hasActiveContract': true,
                 'contractIds': [k],
                 'archived': false,
+                'userId': '',
                 'authUid': '',
                 'createdAt': stamp(),
                 'updatedAt': stamp(),
@@ -831,28 +1090,71 @@ class SparkCommands {
                       .whereType<String>()
                       .where((contractId) => contractId != k)
                       .toSet();
-              if (tenantIds.contains(entry.key)) linkedContractIds.add(k);
+              final inNewContract = tenantIds.contains(entry.key);
+              if (inNewContract) linkedContractIds.add(k);
+              final oldTenantRoomId = '${entry.value['roomId'] ?? ''}'.trim();
+              final isMovingToContractRoom =
+                  inNewContract &&
+                  oldTenantRoomId.isNotEmpty &&
+                  oldTenantRoomId != roomId;
+              final oldTenantRoomName = isMovingToContractRoom
+                  ? (oldTenantRoomId == previousRoomId
+                        ? '${previousRoom?['name'] ?? ''}'
+                        : '${(await read(tx, 'rooms', oldTenantRoomId))?['name'] ?? ''}')
+                  : '';
+              final transferPatch = isMovingToContractRoom
+                  ? _roomTransferFields(
+                      oldTenant: entry.value,
+                      fromRoomId: oldTenantRoomId,
+                      fromRoomName: oldTenantRoomName,
+                      toRoomId: roomId,
+                      toRoomName: '${room['name'] ?? ''}',
+                    )
+                  : const <String, dynamic>{};
               tx.update(ref('tenants', entry.key), {
                 'ownerId': uid,
                 if (entry.key == tenantId) ...contact,
+                if (inNewContract) 'roomId': roomId,
+                if (inNewContract) 'hasActiveContract': true,
                 'role': entry.key == tenantId ? 'leader' : 'member',
                 'contractIds': linkedContractIds.toList(),
+                ...transferPatch,
                 'updatedAt': stamp(),
               });
+              if (transferPatch.isNotEmpty) {
+                _notifyRoomTransfer(
+                  tx,
+                  tenantId: entry.key,
+                  oldTenant: entry.value,
+                  fromRoomId: oldTenantRoomId,
+                  fromRoomName: oldTenantRoomName,
+                  toRoomId: roomId,
+                  toRoomName: '${room['name'] ?? ''}',
+                );
+              }
             }
             final roomContractIds =
                 (room['contractIds'] as List? ?? []).whereType<String>().toSet()
                   ..add(k);
             tx.update(ref('rooms', roomId), {
-              'people': occupiedCount + createdTenants.length,
+              'people': finalRoomTenantIds.length,
               'serviceIds': serviceIds,
               'contractIds': roomContractIds.toList(),
-              'initialElectric': initialElectric,
-              'initialWater': initialWater,
+              'initialMeters': initialMeters,
+              'initialElectric': initialElectric ?? FieldValue.delete(),
+              'initialWater': initialWater ?? FieldValue.delete(),
               'updatedAt': stamp(),
             });
             if (previousRoom != null) {
+              final remainingOldPeople = oldRoomTenants
+                  .where(
+                    (t) =>
+                        t['archived'] != true &&
+                        !tenantIds.contains(t['_id'] as String),
+                  )
+                  .length;
               tx.update(ref('rooms', previousRoomId), {
+                'people': remainingOldPeople,
                 'contractIds': (previousRoom['contractIds'] as List? ?? [])
                     .whereType<String>()
                     .where((contractId) => contractId != k)
@@ -871,14 +1173,15 @@ class SparkCommands {
               'tenantPhone': contact['phone'],
               'tenantEmail': contact['email'],
               'tenantIdentity': contact['identity'],
-              'recipientUid': tenant['authUid'] ?? '',
+              'recipientUid': _linkedUid(tenant),
               'serviceIds': serviceIds,
               'startDate': start,
               'endDate': end,
               'rent': rentVal,
               'deposit': depositVal,
-              'initialElectric': initialElectric,
-              'initialWater': initialWater,
+              'initialMeters': initialMeters,
+              'initialElectric': initialElectric ?? FieldValue.delete(),
+              'initialWater': initialWater ?? FieldValue.delete(),
               'status': start.compareTo(now) > 0 ? 'scheduled' : 'active',
               'note': text(d['note'], 'ghi chú', optional: true),
               'archived': false,
@@ -894,6 +1197,39 @@ class SparkCommands {
               throw StateError(
                 'Hợp đồng đã kết thúc hoặc còn hóa đơn chưa trả',
               );
+            }
+            final rId = '${c['roomId'] ?? ''}';
+            if (rId.isNotEmpty) {
+              final r = await read(tx, 'rooms', rId);
+              if (r != null && r['ownerId'] == uid) {
+                tx.update(ref('rooms', rId), {
+                  'contractIds': (r['contractIds'] as List? ?? [])
+                      .whereType<String>()
+                      .where((cid) => cid != k)
+                      .toList(),
+                  'updatedAt': stamp(),
+                });
+              }
+              final otherActive = (await list(
+                'contracts',
+                field: 'roomId',
+                equals: rId,
+              )).any((oc) => oc['_id'] != k && _effectiveContract(oc, now));
+              if (!otherActive) {
+                final rTenants = await list(
+                  'tenants',
+                  field: 'roomId',
+                  equals: rId,
+                );
+                for (final rt in rTenants) {
+                  if (rt['archived'] != true) {
+                    tx.update(ref('tenants', rt['_id'] as String), {
+                      'hasActiveContract': false,
+                      'updatedAt': stamp(),
+                    });
+                  }
+                }
+              }
             }
             tx.update(ref('contracts', k), {
               'status': '${c['startDate']}'.compareTo(now) > 0
@@ -927,6 +1263,26 @@ class SparkCommands {
                   'updatedAt': stamp(),
                 });
               }
+              final otherActive = (await list(
+                'contracts',
+                field: 'roomId',
+                equals: rId,
+              )).any((oc) => oc['_id'] != k && _effectiveContract(oc, now));
+              if (!otherActive) {
+                final rTenants = await list(
+                  'tenants',
+                  field: 'roomId',
+                  equals: rId,
+                );
+                for (final rt in rTenants) {
+                  if (rt['archived'] != true) {
+                    tx.update(ref('tenants', rt['_id'] as String), {
+                      'hasActiveContract': false,
+                      'updatedAt': stamp(),
+                    });
+                  }
+                }
+              }
             }
             tx.update(ref('contracts', k), {
               'status': 'cancelled',
@@ -934,6 +1290,382 @@ class SparkCommands {
               'endedOn': now,
               'updatedAt': stamp(),
             });
+          } else if (action == 'transferRoom') {
+            final tenantId = id(args['tenantId']);
+            final toRoomId = id(args['toRoomId']);
+            final tenant = owned(
+              await read(tx, 'tenants', tenantId),
+              'Người thuê',
+            );
+            final fromRoomId = '${tenant['roomId'] ?? ''}'.trim();
+            if (fromRoomId.isEmpty) {
+              throw StateError('Người thuê hiện chưa thuộc phòng nào');
+            }
+            if (fromRoomId == toRoomId) {
+              throw StateError('Người thuê đang ở sẵn phòng này rồi');
+            }
+            final fromRoom = owned(
+              await read(tx, 'rooms', fromRoomId),
+              'Phòng hiện tại',
+            );
+            final toRoom = owned(
+              await read(tx, 'rooms', toRoomId),
+              'Phòng chuyển đến',
+            );
+            if (toRoom['condition'] == 'Đang sửa') {
+              throw StateError('Phòng chuyển đến đang sửa chữa');
+            }
+            final allContracts = await list('contracts');
+            final fromActiveContracts = allContracts
+                .where((c) => c['roomId'] == fromRoomId && active(c))
+                .toList();
+            final toActiveContracts = allContracts
+                .where((c) => c['roomId'] == toRoomId && _effectiveContract(c, now))
+                .toList();
+            final fromTenants = (await list(
+              'tenants',
+              field: 'roomId',
+              equals: fromRoomId,
+            )).where((t) => t['archived'] != true).toList();
+            final toTenants = (await list(
+              'tenants',
+              field: 'roomId',
+              equals: toRoomId,
+            )).where((t) => t['archived'] != true).toList();
+
+            if (toActiveContracts.isNotEmpty) {
+              // Chuyển cá nhân người thuê sang phòng đã có hợp đồng (vai trò Thành viên)
+              if (toTenants.length + 1 > (toRoom['capacity'] as num? ?? 100)) {
+                throw StateError('Phòng chuyển đến đã đủ người');
+              }
+              for (final fc in fromActiveContracts) {
+                final fcId = fc['_id'] as String;
+                final remainingIds = (fc['tenantIds'] as List? ?? [])
+                    .whereType<String>()
+                    .where((tid) => tid != tenantId)
+                    .toList();
+                if (fc['tenantId'] == tenantId) {
+                  final fcBills = await list(
+                    'invoices',
+                    field: 'contractId',
+                    equals: fcId,
+                  );
+                  if (fcBills.any(
+                    (b) =>
+                        ['unpaid', 'reported'].contains(b['status']) &&
+                        b['archived'] != true,
+                  )) {
+                    throw StateError(
+                      'Phòng hiện tại còn hóa đơn chưa thu. Hãy thanh toán hoặc hủy trước khi chuyển Trưởng phòng.',
+                    );
+                  }
+                  final nextLeader = fromTenants
+                      .where((t) => t['_id'] != tenantId)
+                      .firstOrNull;
+                  if (nextLeader != null) {
+                    final nlId = nextLeader['_id'] as String;
+                    tx.update(ref('tenants', nlId), {
+                      'role': 'leader',
+                      'updatedAt': stamp(),
+                    });
+                    tx.update(ref('contracts', fcId), {
+                      'tenantId': nlId,
+                      'tenantIds': {...remainingIds, nlId}.toList(),
+                      'tenantName': nextLeader['name'] ?? '',
+                      'tenantPhone': nextLeader['phone'] ?? '',
+                      'tenantEmail': nextLeader['email'] ?? '',
+                      'tenantIdentity': nextLeader['identity'] ?? '',
+                      'recipientUid': _linkedUid(nextLeader),
+                      'updatedAt': stamp(),
+                    });
+                  } else {
+                    tx.update(ref('contracts', fcId), {
+                      'status': 'ended',
+                      'endedOn': now,
+                      'updatedAt': stamp(),
+                    });
+                    tx.update(ref('rooms', fromRoomId), {
+                      'contractIds': (fromRoom['contractIds'] as List? ?? [])
+                          .whereType<String>()
+                          .where((cid) => cid != fcId)
+                          .toList(),
+                    });
+                  }
+                } else if ((fc['tenantIds'] as List? ?? []).contains(tenantId)) {
+                  tx.update(ref('contracts', fcId), {
+                    'tenantIds': remainingIds,
+                    'updatedAt': stamp(),
+                  });
+                }
+              }
+
+              final targetContract = toActiveContracts.first;
+              final tcId = targetContract['_id'] as String;
+              final nextToIds = {
+                ...(targetContract['tenantIds'] as List? ?? [])
+                    .whereType<String>(),
+                tenantId,
+              }.toList();
+              tx.update(ref('contracts', tcId), {
+                'tenantIds': nextToIds,
+                'updatedAt': stamp(),
+              });
+
+              final transferPatch = _roomTransferFields(
+                oldTenant: tenant,
+                fromRoomId: fromRoomId,
+                fromRoomName: '${fromRoom['name'] ?? ''}',
+                toRoomId: toRoomId,
+                toRoomName: '${toRoom['name'] ?? ''}',
+              );
+              tx.update(ref('tenants', tenantId), {
+                'roomId': toRoomId,
+                'role': 'member',
+                'hasActiveContract': true,
+                'contractIds': [tcId],
+                ...transferPatch,
+                'updatedAt': stamp(),
+              });
+              if (transferPatch.isNotEmpty) {
+                _notifyRoomTransfer(
+                  tx,
+                  tenantId: tenantId,
+                  oldTenant: tenant,
+                  fromRoomId: fromRoomId,
+                  fromRoomName: '${fromRoom['name'] ?? ''}',
+                  toRoomId: toRoomId,
+                  toRoomName: '${toRoom['name'] ?? ''}',
+                );
+              }
+              tx.update(ref('rooms', fromRoomId), {
+                'people': (fromTenants.length - 1).clamp(0, 999),
+                'updatedAt': stamp(),
+              });
+              tx.update(ref('rooms', toRoomId), {
+                'people': toTenants.length + 1,
+                'updatedAt': stamp(),
+              });
+            } else {
+              // Phòng chuyển đến đang Trống -> chuyển cả Hợp đồng & thành viên phòng sang phòng mới
+              if (fromActiveContracts.isEmpty) {
+                throw StateError(
+                  'Phòng mới chưa có hợp đồng và phòng hiện tại cũng không có hợp đồng hiệu lực để chuyển sang. Hãy lập hợp đồng cho phòng mới trước.',
+                );
+              }
+              if (toTenants.length + fromTenants.length >
+                  (toRoom['capacity'] as num? ?? 100)) {
+                throw StateError(
+                  'Phòng chuyển đến không đủ sức chứa cho ${fromTenants.length} người',
+                );
+              }
+              final fc = fromActiveContracts.first;
+              final fcId = fc['_id'] as String;
+              final newRent = Billing.number(
+                args['newRent'] ?? toRoom['price'] ?? fc['rent'],
+                'Tiền phòng',
+                min: 1,
+              );
+              tx.update(ref('contracts', fcId), {
+                'roomId': toRoomId,
+                'roomName': toRoom['name'],
+                'rent': newRent,
+                'updatedAt': stamp(),
+              });
+              for (final mt in fromTenants) {
+                final mtId = mt['_id'] as String;
+                final transferPatch = _roomTransferFields(
+                  oldTenant: mt,
+                  fromRoomId: fromRoomId,
+                  fromRoomName: '${fromRoom['name'] ?? ''}',
+                  toRoomId: toRoomId,
+                  toRoomName: '${toRoom['name'] ?? ''}',
+                );
+                tx.update(ref('tenants', mtId), {
+                  'roomId': toRoomId,
+                  'hasActiveContract': true,
+                  ...transferPatch,
+                  'updatedAt': stamp(),
+                });
+                if (transferPatch.isNotEmpty) {
+                  _notifyRoomTransfer(
+                    tx,
+                    tenantId: mtId,
+                    oldTenant: mt,
+                    fromRoomId: fromRoomId,
+                    fromRoomName: '${fromRoom['name'] ?? ''}',
+                    toRoomId: toRoomId,
+                    toRoomName: '${toRoom['name'] ?? ''}',
+                  );
+                }
+              }
+              tx.update(ref('rooms', fromRoomId), {
+                'people': 0,
+                'contractIds': (fromRoom['contractIds'] as List? ?? [])
+                    .whereType<String>()
+                    .where((cid) => cid != fcId)
+                    .toList(),
+                'updatedAt': stamp(),
+              });
+              tx.update(ref('rooms', toRoomId), {
+                'people': toTenants.length + fromTenants.length,
+                'contractIds': {
+                  ...(toRoom['contractIds'] as List? ?? []).whereType<String>(),
+                  fcId,
+                }.toList(),
+                'updatedAt': stamp(),
+              });
+            }
+          } else if (action == 'recalculateInvoice') {
+            final oldBill = owned(await read(tx, 'invoices', k), 'Hóa đơn');
+            if (oldBill['archived'] == true ||
+                !['unpaid', 'reported'].contains(oldBill['status'])) {
+              throw StateError(
+                'Chỉ có thể tự tính lại hóa đơn chưa thanh toán',
+              );
+            }
+            final roomId = id(oldBill['roomId']);
+            final p = Billing.period(oldBill['period']);
+            final room = owned(await read(tx, 'rooms', roomId), 'Phòng');
+            Data? c;
+            final oldContractId = '${oldBill['contractId'] ?? ''}'.trim();
+            if (oldContractId.isNotEmpty) {
+              final candidate = await read(tx, 'contracts', oldContractId);
+              if (candidate != null &&
+                  candidate['ownerId'] == uid &&
+                  candidate['archived'] != true) {
+                c = candidate;
+              }
+            }
+            if (c == null || !active(c)) {
+              final roomCs = (await list(
+                'contracts',
+                field: 'roomId',
+                equals: roomId,
+              )).where((rc) => _effectiveContract(rc, now)).toList();
+              if (roomCs.isNotEmpty) c = roomCs.first;
+            }
+            if (c == null) {
+              throw StateError(
+                'Không tìm thấy hợp đồng hiệu lực của phòng để tính lại hóa đơn',
+              );
+            }
+            final services = <Data>[], meters = <String, Data?>{};
+            for (final sid in (room['serviceIds'] as List? ?? []).toSet()) {
+              final s = owned(await read(tx, 'services', id(sid)), 'Dịch vụ');
+              services.add(s);
+              if (s['mode'] == 'meter') {
+                var meter = await read(tx, 'meters', '${roomId}_${sid}_$p');
+                meter ??= await read(
+                  tx,
+                  'meters',
+                  '${roomId}_${sid}_${Billing.shift(p, -1)}',
+                );
+                if (meter != null) owned(meter, 'Chỉ số');
+                if (meter == null) {
+                  final cInitialMeters = c['initialMeters'] is Map
+                      ? Map<String, dynamic>.from(c['initialMeters'] as Map)
+                      : const <String, dynamic>{};
+                  final rInitialMeters = room['initialMeters'] is Map
+                      ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+                      : const <String, dynamic>{};
+                  final sNameLower = '${s['name'] ?? ''}'.toLowerCase();
+                  final isElectric =
+                      sNameLower.contains('điện') || sNameLower.contains('dien');
+                  final isWater =
+                      sNameLower.contains('nước') || sNameLower.contains('nuoc');
+                  final baseline =
+                      (cInitialMeters[sid] ??
+                              rInitialMeters[sid] ??
+                              (isElectric
+                                  ? (c['initialElectric'] ??
+                                        room['initialElectric'])
+                                  : isWater
+                                  ? (c['initialWater'] ?? room['initialWater'])
+                                  : 0))
+                          as num? ??
+                      0;
+                  meter = {
+                    'ownerId': uid,
+                    'roomId': roomId,
+                    'serviceId': sid,
+                    'period': p,
+                    'previous': baseline,
+                    'current': baseline,
+                    'usage': 0,
+                    'serviceName': s['name'],
+                    'unit': s['unit'],
+                  };
+                  tx.set(ref('meters', '${roomId}_${sid}_$p'), {
+                    ...meter,
+                    'createdAt': stamp(),
+                    'updatedAt': stamp(),
+                  });
+                }
+                meters[sid] = meter;
+              }
+            }
+            final extras = await list('extras', field: 'roomId', equals: roomId),
+                tenants = await list('tenants', field: 'roomId', equals: roomId);
+            final settings = await read(tx, 'settings', uid) ?? {};
+            final tenant = owned(
+              await read(tx, 'tenants', id(c['tenantId'])),
+              'Người thuê',
+            );
+            final evalDay =
+                (oldBill['issueDate'] is String &&
+                    '${c['startDate']}'.compareTo('${oldBill['issueDate']}') <=
+                        0 &&
+                    '${c['endDate']}'.compareTo('${oldBill['issueDate']}') >= 0)
+                ? '${oldBill['issueDate']}'
+                : now;
+            final rebuilt = Billing.build(
+              contract: {
+                ...c,
+                'status': active(c) ? c['status'] : 'active',
+                'tenantName': tenant['name'] ?? c['tenantName'] ?? '',
+                'tenantPhone': tenant['phone'] ?? c['tenantPhone'] ?? '',
+                'tenantEmail': tenant['email'] ?? c['tenantEmail'] ?? '',
+                'tenantIdentity':
+                    tenant['identity'] ?? c['tenantIdentity'] ?? '',
+                'recipientUid': _linkedUid(tenant).isNotEmpty
+                    ? _linkedUid(tenant)
+                    : '${c['recipientUid'] ?? ''}',
+                'bank': {
+                  'name': settings['bankName'] ?? '',
+                  'account': settings['bankAccount'] ?? '',
+                  'holder': settings['bankHolder'] ?? '',
+                },
+              },
+              room: {
+                ...room,
+                'people': tenants.where((t) => t['archived'] != true).length,
+              },
+              services: services,
+              meters: meters,
+              extras: extras.where((x) => x['period'] == p).toList(),
+              p: p,
+              day: evalDay,
+            );
+            tx.update(ref('invoices', k), {
+              'roomId': rebuilt['roomId'],
+              'roomName': rebuilt['roomName'],
+              'contractId': rebuilt['contractId'],
+              'contractNumber': rebuilt['contractNumber'],
+              'tenantId': rebuilt['tenantId'],
+              'tenantName': rebuilt['tenantName'],
+              'tenantPhone': rebuilt['tenantPhone'],
+              'tenantEmail': rebuilt['tenantEmail'],
+              'tenantIdentity': rebuilt['tenantIdentity'],
+              'deposit': rebuilt['deposit'],
+              'recipientUid': rebuilt['recipientUid'],
+              'delivered': rebuilt['delivered'],
+              'dueDate': rebuilt['dueDate'],
+              'lines': rebuilt['lines'],
+              'total': rebuilt['total'],
+              'bank': rebuilt['bank'],
+              'updatedAt': stamp(),
+            });
+            return {'id': k, 'total': rebuilt['total']};
           } else if (action == 'saveExtra' || action == 'deleteExtra') {
             final old = (isNew && action == 'saveExtra')
                 ? null
@@ -946,10 +1678,10 @@ class SparkCommands {
             if (bs.any(
               (b) =>
                   b['period'] == p &&
-                  b['status'] != 'void' &&
+                  b['status'] == 'paid' &&
                   b['archived'] != true,
             )) {
-              throw StateError('Đã có hóa đơn kỳ này, không sửa phụ phí');
+              throw StateError('Hóa đơn kỳ này đã thanh toán, không sửa phụ phí');
             }
             if (action == 'deleteExtra') {
               tx.delete(ref('extras', k));
@@ -967,16 +1699,30 @@ class SparkCommands {
             final old = isNew ? null : await read(tx, 'maintenance', k),
                 roomId = id(d['roomId']);
             if (old != null) owned(old, 'Yêu cầu sửa chữa');
-            owned(await read(tx, 'rooms', roomId), 'Phòng');
+            final room = owned(await read(tx, 'rooms', roomId), 'Phòng');
             final status = d['status'] ?? 'new';
             if (!['new', 'working', 'done', 'cancelled'].contains(status)) {
               throw StateError('Trạng thái không hợp lệ');
             }
+            final title = text(d['title'], 'vấn đề');
+            final issueType = text(
+              d['issueType'] ?? old?['issueType'] ?? 'Thiết bị',
+              'loại sự cố',
+              optional: true,
+            );
+            final priority = text(
+              d['priority'] ?? old?['priority'] ?? 'Trung bình',
+              'mức độ ưu tiên',
+              optional: true,
+            );
             tx.set(ref('maintenance', k), {
               'ownerId': uid,
               'roomId': roomId,
-              'title': text(d['title'], 'vấn đề'),
+              'roomName': room['name'] ?? old?['roomName'] ?? '',
+              'title': title,
               'description': text(d['description'], 'mô tả'),
+              'issueType': issueType.isEmpty ? 'Thiết bị' : issueType,
+              'priority': priority.isEmpty ? 'Trung bình' : priority,
               'cost': Billing.number(d['cost'] ?? 0, 'Chi phí'),
               'status': status,
               'imageUrls': old?['imageUrls'] ?? [],
@@ -984,6 +1730,24 @@ class SparkCommands {
               'createdAt': old?['createdAt'] ?? stamp(),
               'updatedAt': stamp(),
             }, SetOptions(merge: true));
+            final requesterUid = '${old?['requesterUid'] ?? ''}'.trim();
+            if (old != null &&
+                requesterUid.isNotEmpty &&
+                old['status'] != status) {
+              final statusVi = switch (status) {
+                'working' => 'Đang xử lý',
+                'done' => 'Hoàn thành',
+                'cancelled' => 'Đã hủy',
+                _ => 'Mới tiếp nhận',
+              };
+              notice(
+                tx,
+                'maint_${k}_$status',
+                'Cập nhật yêu cầu bảo trì',
+                '${room['name'] ?? ''} · $title: $statusVi',
+                recipient: requesterUid,
+              );
+            }
           } else if (action == 'deleteMaintenance' ||
               action == 'archiveMaintenance') {
             owned(await read(tx, 'maintenance', k), 'Yêu cầu sửa chữa');
@@ -1035,7 +1799,7 @@ class SparkCommands {
                 await read(tx, 'tenants', id(b['tenantId'])),
                 'Người thuê',
               );
-              final recipient = '${t['authUid'] ?? ''}';
+              final recipient = _linkedUid(t);
               if (recipient.isEmpty || b['status'] == 'void') {
                 throw StateError(
                   'Chưa liên kết UID người thuê hoặc hóa đơn đã hủy',
@@ -1216,16 +1980,26 @@ class SparkCommands {
         if (meter != null) owned(meter, 'Chỉ số');
         if (meter == null) {
           // Tự động tìm baseline từ hợp đồng / phòng để khởi tạo mốc chỉ số
+          final cInitialMeters = c['initialMeters'] is Map
+              ? Map<String, dynamic>.from(c['initialMeters'] as Map)
+              : const <String, dynamic>{};
+          final rInitialMeters = room['initialMeters'] is Map
+              ? Map<String, dynamic>.from(room['initialMeters'] as Map)
+              : const <String, dynamic>{};
           final sNameLower = '${s['name'] ?? ''}'.toLowerCase();
           final isElectric =
               sNameLower.contains('điện') || sNameLower.contains('dien');
           final isWater =
               sNameLower.contains('nước') || sNameLower.contains('nuoc');
-          final baseline = (isElectric
-                  ? (c['initialElectric'] ?? room['initialElectric'])
-                  : isWater
-                      ? (c['initialWater'] ?? room['initialWater'])
-                      : 0) as num? ??
+          final baseline =
+              (cInitialMeters[sid] ??
+                      rInitialMeters[sid] ??
+                      (isElectric
+                          ? (c['initialElectric'] ?? room['initialElectric'])
+                          : isWater
+                          ? (c['initialWater'] ?? room['initialWater'])
+                          : 0))
+                  as num? ??
               0;
           meter = {
             'ownerId': uid,
@@ -1266,7 +2040,9 @@ class SparkCommands {
         'tenantPhone': tenant['phone'] ?? c['tenantPhone'] ?? '',
         'tenantEmail': tenant['email'] ?? c['tenantEmail'] ?? '',
         'tenantIdentity': tenant['identity'] ?? c['tenantIdentity'] ?? '',
-        'recipientUid': tenant['authUid'] ?? c['recipientUid'] ?? '',
+        'recipientUid': _linkedUid(tenant).isNotEmpty
+            ? _linkedUid(tenant)
+            : '${c['recipientUid'] ?? ''}',
         'bank': {
           'name': settings['bankName'] ?? '',
           'account': settings['bankAccount'] ?? '',
@@ -1315,7 +2091,13 @@ class SparkCommands {
   Future<void> reportPayment(String key, String note) =>
       db.runTransaction((tx) async {
         final b = found(await read(tx, 'invoices', id(key)), 'Hóa đơn');
-        if (b['recipientUid'] != uid || b['status'] != 'unpaid') {
+        final userMap = await read(tx, 'users', uid);
+        final isRecipient = b['recipientUid'] == uid;
+        final isRoomTenant =
+            userMap != null &&
+            userMap['ownerId'] == b['ownerId'] &&
+            userMap['roomId'] == b['roomId'];
+        if ((!isRecipient && !isRoomTenant) || b['status'] != 'unpaid') {
           throw StateError('Không phải hóa đơn của bạn hoặc đã báo thanh toán');
         }
         tx.update(ref('invoices', key), {

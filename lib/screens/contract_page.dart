@@ -128,7 +128,7 @@ class _ContractPageState extends State<ContractPage> {
       fg = const Color(0xFFC7070E);
       text = 'Hết hạn';
     } else {
-      bg = const Color(0xFFBDCCE9);
+      bg = const Color(0xFFE7E2D8);
       fg = ink;
       text = 'Đã thanh lý';
     }
@@ -272,7 +272,7 @@ class _ContractPageState extends State<ContractPage> {
                   _coloredFilterPill(
                     id: 'ended',
                     text: 'Đã thanh lý $endedCount',
-                    bg: const Color(0xFFBDCCE9),
+                    bg: const Color(0xFFE7E2D8),
                     fg: ink,
                   ),
                 ],

@@ -93,6 +93,21 @@ class TenantDetailPage extends StatelessWidget {
                   moreActionsMenu(
                     iconColor: ink,
                     onEdit: () => openPage(context, TenantEditPage(tenant: t)),
+                    extras: [
+                      if (room != null)
+                        MoreMenuItem(
+                          value: 'transfer',
+                          label: 'Chuyển phòng',
+                          icon: Icons.swap_horiz_rounded,
+                          onTap: () => showRoomTransferDialog(
+                            context,
+                            tenantId: tenantId,
+                            tenantName: t.name,
+                            currentRoomId: room.id,
+                            currentRoomName: room.name,
+                          ),
+                        ),
+                    ],
                     onDelete: () async {
                       if (await confirm(
                             context,
@@ -234,6 +249,38 @@ class TenantDetailPage extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                              if (room != null) ...[
+                                const SizedBox(height: 12),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => showRoomTransferDialog(
+                                      context,
+                                      tenantId: tenantId,
+                                      tenantName: t.name,
+                                      currentRoomId: room.id,
+                                      currentRoomName: room.name,
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      minimumSize: const Size(0, 38),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(11),
+                                      ),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.swap_horiz_rounded,
+                                      size: 17,
+                                    ),
+                                    label: const Text(
+                                      'Chuyển phòng',
+                                      style: TextStyle(fontSize: 12.5),
+                                    ),
+                                  ),
+                                ),
+                              ],
                               if (activeContract != null) ...[
                                 const SizedBox(height: 14),
                                 Text(
@@ -852,7 +899,10 @@ class TenantFullProfilePage extends StatelessWidget {
                 const Divider(height: 12),
                 info('CCCD/Passport', t.text('identity')),
                 const Divider(height: 12),
-                info('UID nhận hóa đơn', t.text('authUid')),
+                info(
+                  'UID nhận hóa đơn',
+                  t.text('userId').isNotEmpty ? t.text('userId') : t.text('authUid'),
+                ),
                 const Divider(height: 12),
                 info('Ghi Chú', t.text('note')),
               ],

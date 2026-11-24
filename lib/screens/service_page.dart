@@ -736,9 +736,9 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
     final periods = _recentPeriods(12);
     if (!periods.contains(_period)) periods.insert(0, _period);
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FA),
+      backgroundColor: canvas,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF6F7FA),
+        backgroundColor: canvas,
         leading: IconButton(
           icon: const Icon(Icons.chevron_left_rounded, size: 30, color: ink),
           onPressed: () => Navigator.maybePop(context),
@@ -791,8 +791,8 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: const Color(0xFF168BFF),
-                            width: 2,
+                            color: blue,
+                            width: 1.8,
                           ),
                         ),
                         child: Row(
@@ -1348,7 +1348,7 @@ class _RoomMeterEntryPageState extends State<RoomMeterEntryPage> {
                                 meters,
                               ),
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF1C61EB),
+                          backgroundColor: blue,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(11),
@@ -1769,6 +1769,10 @@ class _MeterRoomFormState extends State<MeterRoomForm> {
 }
 
 num? _initialRoomReadingForService(Record room, Record service) {
+  final rawMeters = room.data['initialMeters'];
+  if (rawMeters is Map && rawMeters[service.id] is num) {
+    return rawMeters[service.id] as num;
+  }
   final sName = service.name.toLowerCase();
   if (sName.contains('điện') || sName.contains('dien')) {
     return room.number('initialElectric');

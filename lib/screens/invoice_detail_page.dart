@@ -488,14 +488,39 @@ class InvoiceDetailPage extends StatelessWidget {
   Widget build(BuildContext context) => DocumentView(
     collection: 'invoices',
     id: invoiceId,
-    builder: (bill) => RecordsView(
-      collection: 'tenants',
-      builder: (_, tenants) => RecordsView(
-        collection: 'contracts',
-        builder: (_, contracts) {
-          final bank = bill.data['bank'] is Map
-              ? bill.data['bank'] as Map
-              : const {};
+    builder: (bill) {
+      if (!landlord) {
+        return _buildContent(
+          context,
+          bill,
+          tenants: const [],
+          contracts: const [],
+        );
+      }
+      return RecordsView(
+        collection: 'tenants',
+        builder: (_, tenants) => RecordsView(
+          collection: 'contracts',
+          builder: (_, contracts) => _buildContent(
+            context,
+            bill,
+            tenants: tenants,
+            contracts: contracts,
+          ),
+        ),
+      );
+    },
+  );
+
+  Widget _buildContent(
+    BuildContext context,
+    Record bill, {
+    required List<Record> tenants,
+    required List<Record> contracts,
+  }) {
+    final bank = bill.data['bank'] is Map
+        ? bill.data['bank'] as Map
+        : const {};
           final lines = bill.data['lines'] as List? ?? [];
           final status = bill.text('status');
           final canLandlordConfirm =
@@ -658,7 +683,7 @@ class InvoiceDetailPage extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 InkWell(
-                                  onTap: bill.text('roomId').isEmpty
+                                  onTap: !landlord || bill.text('roomId').isEmpty
                                       ? null
                                       : () => openPage(
                                           context,
@@ -668,8 +693,8 @@ class InvoiceDetailPage extends StatelessWidget {
                                         ),
                                   child: Text(
                                     'Phòng ${bill.text('roomName')}',
-                                    style: const TextStyle(
-                                      color: blue,
+                                    style: TextStyle(
+                                      color: landlord ? blue : ink,
                                       fontSize: 13.5,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -762,7 +787,7 @@ class InvoiceDetailPage extends StatelessWidget {
                         child: Divider(height: 1, color: line),
                       ),
                       InkWell(
-                        onTap: linkedTenant == null
+                        onTap: !landlord || linkedTenant == null
                             ? null
                             : () => openPage(
                                 context,
@@ -786,7 +811,7 @@ class InvoiceDetailPage extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            if (linkedTenant != null)
+                            if (landlord && linkedTenant != null)
                               const Icon(
                                 Icons.chevron_right_rounded,
                                 size: 18,
@@ -839,7 +864,7 @@ class InvoiceDetailPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       InkWell(
-                        onTap: linkedContract == null
+                        onTap: !landlord || linkedContract == null
                             ? null
                             : () => openPage(
                                 context,
@@ -858,8 +883,8 @@ class InvoiceDetailPage extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 'Hạn thanh toán: ${bill.text('dueDate')}  •  HĐ: ${bill.text('contractNumber', bill.text('contractId'))}',
-                                style: const TextStyle(
-                                  color: blue,
+                                style: TextStyle(
+                                  color: landlord ? blue : muted,
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -926,13 +951,45 @@ class InvoiceDetailPage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Chi tiết khoản phí',
-                        style: TextStyle(
-                          color: ink,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Chi tiết khoản phí',
+                              style: TextStyle(
+                                color: ink,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          if (canLandlordConfirm)
+                            TextButton.icon(
+                              onPressed: () => perform(
+                                context,
+                                () => store.command(
+                                  'recalculateInvoice',
+                                  id: invoiceId,
+                                ),
+                                'Đã tự tính lại các khoản phí theo dữ liệu phòng mới nhất',
+                              ),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                              ),
+                              icon: const Icon(Icons.refresh_rounded, size: 16),
+                              label: const Text(
+                                'Tự tính lại',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 14),
                       for (final row in lines)
@@ -1253,8 +1310,5 @@ class InvoiceDetailPage extends StatelessWidget {
                   )
                 : null,
           );
-        },
-      ),
-    ),
-  );
+  }
 }

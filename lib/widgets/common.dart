@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/record.dart';
 import '../services/app_store.dart';
@@ -7,12 +9,12 @@ import '../utils/validators.dart';
 
 export '../services/app_store.dart' show errorText;
 
-const blue = Color(0xFF2563EB);
-const softBlue = Color(0xFFEAF1FF);
-const ink = Color(0xFF111827);
-const muted = Color(0xFF64748B);
-const canvas = Color(0xFFF7F8FA);
-const line = Color(0xFFE5E7EB);
+const blue = Color(0xFFF26522);
+const softBlue = Color(0xFFFFF1E8);
+const ink = Color(0xFF1C1917);
+const muted = Color(0xFF73706B);
+const canvas = Color(0xFFF8F7F5);
+const line = Color(0xFFEBE7E2);
 
 final store = AppStore.instance;
 final authTransitioning = ValueNotifier<bool>(false);
@@ -195,7 +197,7 @@ Widget statusPill(String value, {String? customText}) {
       value == 'Đã thanh lý' ||
       value == 'Đã kết thúc') {
     foreground = ink;
-    background = const Color(0xFFBDCCE9);
+    background = const Color(0xFFE7E2D8);
   } else if (normalized.contains('void') ||
       normalized.contains('cancel') ||
       normalized.contains('expired') ||
@@ -273,8 +275,8 @@ Widget initialAvatar(
   final lower = name.toLowerCase();
   if (lower.contains('điện') || lower.contains('dien')) {
     return (
-      color: const Color(0xFF2563EB),
-      softBg: const Color(0xFFEAF1FF),
+      color: const Color(0xFFD97706),
+      softBg: const Color(0xFFFEF3C7),
       symbol: 'ϟ',
       icon: Icons.bolt_rounded,
     );
@@ -317,15 +319,15 @@ Widget initialAvatar(
   }
   if (mode == 'meter') {
     return (
-      color: const Color(0xFF2563EB),
-      softBg: const Color(0xFFEAF1FF),
+      color: blue,
+      softBg: softBlue,
       symbol: 'ϟ',
       icon: Icons.speed_rounded,
     );
   }
   return (
-    color: const Color(0xFF2563EB),
-    softBg: const Color(0xFFEAF1FF),
+    color: blue,
+    softBg: softBlue,
     symbol: name.trim().isEmpty ? 'DV' : name.trim()[0].toUpperCase(),
     icon: Icons.miscellaneous_services_rounded,
   );
@@ -1258,4 +1260,577 @@ void showCccdFullDialog(BuildContext context, String title, String src) {
       ),
     ),
   );
+}
+
+String todayVi() => DateTime.now()
+    .toUtc()
+    .add(const Duration(hours: 7))
+    .toIso8601String()
+    .substring(0, 10);
+
+bool isContractEffective(Record c, [String? day]) {
+  final now = day ?? todayVi();
+  return !c.archived &&
+      ['active', 'scheduled'].contains(c.text('status')) &&
+      c.text('endDate').compareTo(now) >= 0;
+}
+
+Future<void> showRoomTransferDialog(
+  BuildContext context, {
+  required String tenantId,
+  required String tenantName,
+  required String currentRoomId,
+  required String currentRoomName,
+}) => showDialog<void>(
+  context: context,
+  builder: (_) => _RoomTransferDialog(
+    tenantId: tenantId,
+    tenantName: tenantName,
+    currentRoomId: currentRoomId,
+    currentRoomName: currentRoomName,
+  ),
+);
+
+class _RoomTransferDialog extends StatefulWidget {
+  final String tenantId;
+  final String tenantName;
+  final String currentRoomId;
+  final String currentRoomName;
+
+  const _RoomTransferDialog({
+    required this.tenantId,
+    required this.tenantName,
+    required this.currentRoomId,
+    required this.currentRoomName,
+  });
+
+  @override
+  State<_RoomTransferDialog> createState() => _RoomTransferDialogState();
+}
+
+class _RoomTransferDialogState extends State<_RoomTransferDialog> {
+  String? _toRoomId;
+  bool _submitting = false;
+
+  Future<void> _submit() async {
+    if (_submitting || _toRoomId == null || _toRoomId!.isEmpty) return;
+    setState(() => _submitting = true);
+    try {
+      await store.command(
+        'transferRoom',
+        args: {'tenantId': widget.tenantId, 'toRoomId': _toRoomId},
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      message(
+        context,
+        'Đã chuyển phòng thành công và gửi thông báo xác nhận cho người thuê',
+      );
+    } catch (e) {
+      if (mounted) message(context, errorText(e));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final day = todayVi();
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: const Text(
+        'Chuyển phòng',
+        style: TextStyle(color: ink, fontSize: 17, fontWeight: FontWeight.w700),
+      ),
+      content: SizedBox(
+        width: 360,
+        child: RecordsView(
+          collection: 'rooms',
+          builder: (_, allRooms) => RecordsView(
+            collection: 'contracts',
+            builder: (_, contracts) {
+              final contractedIds = contracts
+                  .where((c) => isContractEffective(c, day))
+                  .map((c) => c.text('roomId'))
+                  .toSet();
+              final rooms =
+                  allRooms
+                      .where(
+                        (r) =>
+                            !r.archived &&
+                            r.id != widget.currentRoomId &&
+                            r.condition != 'Đang sửa',
+                      )
+                      .toList()
+                    ..sort((a, b) => naturalCompare(a.name, b.name));
+              final selected = rooms
+                  .where((r) => r.id == _toRoomId)
+                  .firstOrNull;
+              final selectedHasContract =
+                  selected != null && contractedIds.contains(selected.id);
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Người thuê: ${widget.tenantName}\nPhòng hiện tại: ${widget.currentRoomName}',
+                    style: const TextStyle(color: muted, fontSize: 12.5),
+                  ),
+                  const SizedBox(height: 14),
+                  if (rooms.isEmpty)
+                    const Text(
+                      'Hiện chưa có phòng khả dụng nào khác để chuyển sang.',
+                      style: TextStyle(color: Color(0xFFB91C1C), fontSize: 12.5),
+                    )
+                  else ...[
+                    DropdownButtonFormField<String>(
+                      key: ValueKey('transfer_to_${selected?.id}'),
+                      initialValue: selected?.id,
+                      isExpanded: true,
+                      dropdownColor: Colors.white,
+                      decoration: InputDecoration(
+                        labelText: 'Chọn phòng chuyển đến',
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      items: [
+                        for (final r in rooms)
+                          DropdownMenuItem(
+                            value: r.id,
+                            child: Text(
+                              contractedIds.contains(r.id)
+                                  ? '${r.name} · Đang thuê (${r.number('people') ?? 0}/${r.number('capacity') ?? '—'} người)'
+                                  : '${r.name} · Trống (${money(r.data['price'])}/tháng)',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: ink,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                      onChanged: _submitting
+                          ? null
+                          : (v) => setState(() => _toRoomId = v),
+                    ),
+                    if (selected != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: softBlue,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          selectedHasContract
+                              ? 'Phòng ${selected.name} đã có hợp đồng: hệ thống sẽ chuyển ${widget.tenantName} sang làm Thành viên phòng mới.'
+                              : 'Phòng ${selected.name} đang Trống: hệ thống sẽ chuyển Hợp đồng và thành viên sang phòng ${selected.name} (giá thuê ${money(selected.data['price'])}/tháng).',
+                          style: const TextStyle(color: ink, fontSize: 11.8),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Sau khi chuyển, dashboard của người thuê sẽ tự động chuyển sang màn hình thông báo và chỉ xem được thông tin phòng mới khi họ nhấn Xác nhận.',
+                      style: TextStyle(color: muted, fontSize: 11.5),
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        FilledButton(
+          onPressed: _submitting || _toRoomId == null ? null : _submit,
+          style: FilledButton.styleFrom(minimumSize: const Size(110, 40)),
+          child: Text(_submitting ? 'Đang chuyển...' : 'Xác nhận chuyển'),
+        ),
+      ],
+    );
+  }
+}
+
+class ManagerInviteCodeBanner extends StatefulWidget {
+  final bool compact;
+  const ManagerInviteCodeBanner({super.key, this.compact = false});
+
+  @override
+  State<ManagerInviteCodeBanner> createState() =>
+      _ManagerInviteCodeBannerState();
+}
+
+class _ManagerInviteCodeBannerState extends State<ManagerInviteCodeBanner> {
+  bool _ensuring = false;
+  String? _ensureError;
+
+  Future<void> _ensureInviteCode() async {
+    if (_ensuring) return;
+    setState(() {
+      _ensuring = true;
+      _ensureError = null;
+    });
+    try {
+      await store.ensureManagerInviteCode();
+    } catch (e) {
+      if (mounted) setState(() => _ensureError = errorText(e));
+    } finally {
+      if (mounted) setState(() => _ensuring = false);
+    }
+  }
+
+  Future<void> _copyCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (mounted) {
+      message(context, 'Đã sao chép mã mời $code');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: store.db.collection('managers').doc(store.uid).snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data();
+        final enabled = data?['enabled'] == true;
+        final code = '${data?['inviteCode'] ?? ''}'.trim().toUpperCase();
+        if (enabled && code.isEmpty && !_ensuring && _ensureError == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _ensureInviteCode();
+          });
+        }
+        if (snapshot.hasData && !enabled) {
+          return const SizedBox.shrink();
+        }
+
+        return RecordsView(
+          collection: 'contracts',
+          builder: (_, contracts) {
+            final day = todayVi();
+            final hasAnyContract = contracts.any(
+              (c) => isContractEffective(c, day),
+            );
+            if (!hasAnyContract) {
+              if (widget.compact) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 11,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: line, width: 0.7),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.lock_outline_rounded,
+                          color: muted,
+                          size: 19,
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Mã mời dãy trọ (chưa mở)',
+                              style: TextStyle(
+                                color: ink,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Lập hợp đồng thuê phòng trước để mời và thêm người thuê.',
+                              style: TextStyle(color: muted, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: line, width: 0.7),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.lock_outline_rounded, size: 20, color: muted),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Mã mời dãy trọ (chưa mở)',
+                            style: TextStyle(
+                              color: ink,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Hiện chưa có hợp đồng hiệu lực nào. Bạn cần lập hợp đồng trước khi thêm hoặc mời người thuê vào phòng.',
+                            style: TextStyle(color: muted, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            if (widget.compact) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: line, width: 0.7),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: softBlue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.vpn_key_outlined,
+                    color: blue,
+                    size: 19,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Mã mời dãy trọ',
+                        style: TextStyle(
+                          color: muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      if (code.isNotEmpty)
+                        Text(
+                          code,
+                          style: const TextStyle(
+                            color: ink,
+                            fontSize: 16,
+                            letterSpacing: 2.2,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        )
+                      else if (_ensureError != null)
+                        Text(
+                          _ensureError!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontSize: 11.5,
+                          ),
+                        )
+                      else
+                        const Text(
+                          'Đang tạo mã...',
+                          style: TextStyle(color: muted, fontSize: 12.5),
+                        ),
+                    ],
+                  ),
+                ),
+                if (code.isNotEmpty)
+                  OutlinedButton.icon(
+                    onPressed: () => _copyCode(code),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 36),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      side: BorderSide(color: blue.withValues(alpha: 0.35)),
+                      backgroundColor: softBlue,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: const Icon(Icons.copy_rounded, size: 15, color: blue),
+                    label: const Text(
+                      'Copy mã',
+                      style: TextStyle(
+                        color: blue,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                else if (_ensureError != null)
+                  TextButton(
+                    onPressed: _ensuring ? null : _ensureInviteCode,
+                    child: const Text('Thử lại'),
+                  ),
+              ],
+            ),
+          );
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: line, width: 0.7),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.vpn_key_outlined, size: 19, color: blue),
+                  SizedBox(width: 8),
+                  Text(
+                    'Mã mời dãy trọ',
+                    style: TextStyle(
+                      color: ink,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Mã cố định của dãy trọ. Gửi mã này cho người thuê sau khi đã thêm đúng email của họ vào phòng.',
+                style: TextStyle(color: muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              if (code.isNotEmpty)
+                InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _copyCode(code),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: softBlue,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: blue.withValues(alpha: 0.28)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            code,
+                            style: const TextStyle(
+                              color: blue,
+                              fontSize: 22,
+                              letterSpacing: 4,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        FilledButton.icon(
+                          onPressed: () => _copyCode(code),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 38),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: const Icon(Icons.copy_rounded, size: 16),
+                          label: const Text(
+                            'Copy mã',
+                            style: TextStyle(fontSize: 12.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_ensureError != null)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _ensureError!,
+                        style: const TextStyle(
+                          color: Color(0xFFDC2626),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _ensuring ? null : _ensureInviteCode,
+                      child: const Text('Thử lại'),
+                    ),
+                  ],
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Đang khởi tạo mã mời dãy trọ...',
+                        style: TextStyle(color: muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+          },
+        );
+      },
+    );
+  }
 }
