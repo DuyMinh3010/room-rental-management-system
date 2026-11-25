@@ -239,52 +239,6 @@ class AccountPage extends StatelessWidget {
                     onTap: () => openPage(context, const SettingsPage()),
                   ),
                   _AccountMenuRow(
-                    title: 'Gán dữ liệu cũ cho tài khoản này',
-                    subtitle:
-                        'Chỉ chạy một lần để thêm ownerId cho dữ liệu hiện có',
-                    onTap: () async {
-                      if (!await confirm(
-                        context,
-                        'Toàn bộ dữ liệu chưa có ownerId sẽ được gán cho tài khoản chủ trọ đang đăng nhập. Không thể tự động chuyển dữ liệu này sang owner khác. Tiếp tục?',
-                      )) {
-                        return;
-                      }
-                      if (!context.mounted) return;
-                      await perform(
-                        context,
-                        () => store.command('migrateOwnerData'),
-                        'Đã gán ownerId cho dữ liệu cũ',
-                      );
-                    },
-                  ),
-                  _AccountMenuRow(
-                    title: 'Cập nhật ID dịch vụ cũ',
-                    subtitle:
-                        'Đồng bộ ID dịch vụ theo document ID, chỉ trong dữ liệu của bạn',
-                    onTap: () => perform(
-                      context,
-                      () => store.command('migrateServiceIds'),
-                      'Đã cập nhật ID dịch vụ cũ',
-                    ),
-                  ),
-                  _AccountMenuRow(
-                    title: 'Hợp đồng & kiểm tra hóa đơn',
-                    subtitle: 'Chạy kiểm tra hóa đơn đến kỳ và quá hạn',
-                    onTap: () => perform(
-                      context,
-                      () async {
-                        final result = await store.command('runBilling');
-                        if (context.mounted) {
-                          message(
-                            context,
-                            'Mới: ${result['created']} · Đã có: ${result['existing']} · Nhắc quá hạn: ${result['late']}${result['blocked'] > 0 ? ' · Chưa đủ dữ liệu: ${result['blocked']}' : ''}',
-                          );
-                        }
-                      },
-                      'Đã kiểm tra hóa đơn và thông báo quá hạn',
-                    ),
-                  ),
-                  _AccountMenuRow(
                     title: 'Thông báo',
                     subtitle: 'Cài đặt nhắc nhở & hộp thư hệ thống',
                     onTap: () => openPage(context, const NotificationPage()),
