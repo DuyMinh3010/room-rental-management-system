@@ -540,9 +540,16 @@ class _ContractEditPageState extends State<ContractEditPage> {
                 builder: (_, contracts) {
                   final rooms =
                       rs
-                          .where((r) => !r.archived && r.condition == 'Tốt')
+                          .where(
+                            (r) =>
+                                !r.archived &&
+                                (r.condition != 'Đang sửa' ||
+                                    r.id == widget.contract?.text('roomId') ||
+                                    r.id == widget.initialRoomId),
+                          )
                           .toList()
                         ..sort((a, b) => naturalCompare(a.name, b.name));
+                  final uniqueRooms = {for (final r in rooms) r.id: r}.values.toList();
 
                   // Các phòng đang có hợp đồng hiệu lực (ngoại trừ hợp đồng đang sửa)
                   final occupiedRoomIds = contracts
@@ -591,11 +598,11 @@ class _ContractEditPageState extends State<ContractEditPage> {
                             )
                             .toList();
                   final contractMemberIds = widget.contract == null
-                      ? const <String>{}
+                      ? <String>{}
                       : {
                           widget.contract!.text('tenantId'),
                           ...widget.contract!.strings('tenantIds'),
-                        }..removeWhere((id) => id.isEmpty);
+                        }.where((id) => id.isNotEmpty).toSet();
                   final roomTenants = selectedRoom == null
                       ? const <Record>[]
                       : ts
@@ -607,28 +614,34 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                           contractMemberIds.contains(t.id))),
                             )
                             .toList();
+                  final uniqueRoomTenants =
+                      {for (final t in roomTenants) t.id: t}.values.toList();
                   final needsExistingTenant = isEdit || _useExistingTenant;
                   final validTenantId = !needsExistingTenant
                       ? null
-                      : roomTenants.any((t) => t.id == _tenantId)
+                      : uniqueRoomTenants.any((t) => t.id == _tenantId)
                       ? _tenantId
-                      : (roomTenants.isNotEmpty
-                            ? (roomTenants
+                      : (uniqueRoomTenants.isNotEmpty
+                            ? (uniqueRoomTenants
                                       .where((t) => t.text('role') == 'leader')
                                       .firstOrNull
                                       ?.id ??
-                                  roomTenants.first.id)
+                                  uniqueRoomTenants.first.id)
                             : null);
                   if (validTenantId != _tenantId) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (mounted) setState(() => _tenantId = validTenantId);
                     });
                   }
-                  final selectedTenant = roomTenants
+                  final selectedTenant = uniqueRoomTenants
                       .where((t) => t.id == validTenantId)
                       .firstOrNull;
-                  if (needsExistingTenant) {
-                    _setContact(selectedTenant);
+                  if (needsExistingTenant &&
+                      selectedTenant != null &&
+                      _contactTenantId != selectedTenant.id) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _setContact(selectedTenant);
+                    });
                   }
                   final isSelectedRoomOccupied =
                       selectedRoom != null &&
@@ -663,7 +676,9 @@ class _ContractEditPageState extends State<ContractEditPage> {
                           padding: const EdgeInsets.only(bottom: 8),
                           child: DropdownButtonFormField<String>(
                             key: ValueKey('room_${selectedRoom?.id}'),
-                            initialValue: selectedRoom?.id,
+                            initialValue: uniqueRooms.any((r) => r.id == selectedRoom?.id)
+                                ? selectedRoom?.id
+                                : null,
                             dropdownColor: Colors.white,
                             isExpanded: true,
                             icon: const Icon(
@@ -675,7 +690,7 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               hint: 'Chọn phòng trống để lập hợp đồng',
                             ),
                             items: [
-                              for (final r in rooms)
+                              for (final r in uniqueRooms)
                                 DropdownMenuItem(
                                   value: r.id,
                                   child: Text(
@@ -815,7 +830,9 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               key: ValueKey(
                                 'tenant_${selectedRoom?.id}_$validTenantId',
                               ),
-                              initialValue: validTenantId,
+                              initialValue: uniqueRoomTenants.any((t) => t.id == validTenantId)
+                                  ? validTenantId
+                                  : null,
                               dropdownColor: Colors.white,
                               icon: const Icon(
                                 Icons.keyboard_arrow_down_rounded,
@@ -825,12 +842,12 @@ class _ContractEditPageState extends State<ContractEditPage> {
                               decoration: _boxDecoration(
                                 hint: selectedRoom == null
                                     ? 'Chọn phòng trước'
-                                    : roomTenants.isEmpty
+                                    : uniqueRoomTenants.isEmpty
                                     ? 'Phòng chưa có người thuê sẵn'
                                     : 'Chọn duy nhất 1 Trưởng phòng',
                               ),
                               items: [
-                                for (final t in roomTenants)
+                                for (final t in uniqueRoomTenants)
                                   DropdownMenuItem(
                                     value: t.id,
                                     child: Text('${t.name} (${t.text('phone')})'),
@@ -965,9 +982,13 @@ class _ContractEditPageState extends State<ContractEditPage> {
                                     key: ValueKey(
                                       'role_${tenant.id}_${_useExistingTenant ? 'member' : tenant.role}',
                                     ),
-                                    initialValue: _useExistingTenant
-                                        ? 'member'
-                                        : tenant.role,
+                                    initialValue:
+                                        (tenant.role == 'leader' ||
+                                                tenant.role == 'member')
+                                            ? (_useExistingTenant
+                                                ? 'member'
+                                                : tenant.role)
+                                            : 'member',
                                     decoration: _boxDecoration(hint: 'Vai trò'),
                                     items: const [
                                       DropdownMenuItem(
